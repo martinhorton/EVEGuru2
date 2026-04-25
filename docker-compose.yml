@@ -33,5 +33,22 @@ services:
     volumes:
       - ./logs:/app/logs
 
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-eveguru}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-eveguru}
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
