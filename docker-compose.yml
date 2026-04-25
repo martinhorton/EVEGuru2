@@ -1,0 +1,39 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-eveguru}
+      POSTGRES_USER: ${POSTGRES_USER:-eveguru}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eveguru}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  agent:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-eveguru}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-eveguru}
+      SHORTAGE_RATIO: ${SHORTAGE_RATIO:-2.0}
+      MIN_DAILY_VOLUME: ${MIN_DAILY_VOLUME:-10}
+      MIN_MARGIN_PCT: ${MIN_MARGIN_PCT:-10.0}
+      SHIPPING_COST_PER_M3: ${SHIPPING_COST_PER_M3:-1000}
+      SALES_TAX_PCT: ${SALES_TAX_PCT:-3.6}
+      BROKER_FEE_PCT: ${BROKER_FEE_PCT:-3.0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  postgres_data:
