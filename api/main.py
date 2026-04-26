@@ -212,28 +212,39 @@ _HUB_META = [
 ]
 
 
+_SDE_NOT_LOADED = HTTPException(
+    503,
+    detail="Blueprint data not loaded. Run: docker compose run --rm sde",
+)
+
+
 @app.get("/api/industry/search")
 async def industry_search(q: str = Query(..., min_length=2)):
     """Search blueprints by product name or blueprint name."""
-    rows = await _pool.fetch("""
-        SELECT
-            b.blueprint_type_id,
-            b.product_type_id,
-            b.product_qty,
-            b.base_time_seconds,
-            bp_it.name  AS blueprint_name,
-            prod_it.name AS product_name,
-            prod_it.group_name,
-            prod_it.category_name,
-            prod_it.packaged_volume::float AS product_volume
-        FROM blueprints b
-        JOIN item_types bp_it   ON bp_it.type_id   = b.blueprint_type_id
-        JOIN item_types prod_it ON prod_it.type_id = b.product_type_id
-        WHERE prod_it.name ILIKE '%' || $1 || '%'
-           OR bp_it.name  ILIKE '%' || $1 || '%'
-        ORDER BY prod_it.name
-        LIMIT 60
-    """, q)
+    try:
+        rows = await _pool.fetch("""
+            SELECT
+                b.blueprint_type_id,
+                b.product_type_id,
+                b.product_qty,
+                b.base_time_seconds,
+                bp_it.name   AS blueprint_name,
+                prod_it.name AS product_name,
+                prod_it.group_name,
+                prod_it.category_name,
+                prod_it.packaged_volume::float AS product_volume
+            FROM blueprints b
+            JOIN item_types bp_it   ON bp_it.type_id   = b.blueprint_type_id
+            JOIN item_types prod_it ON prod_it.type_id = b.product_type_id
+            WHERE prod_it.name ILIKE '%' || $1 || '%'
+               OR bp_it.name  ILIKE '%' || $1 || '%'
+            ORDER BY prod_it.name
+            LIMIT 60
+        """, q)
+    except Exception as exc:
+        if "does not exist" in str(exc):
+            raise _SDE_NOT_LOADED
+        raise
     return [_row(r) for r in rows]
 
 
