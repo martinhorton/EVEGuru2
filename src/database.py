@@ -262,15 +262,36 @@ async def deactivate_old_opportunities() -> None:
     )
 
 
-async def insert_opportunity(opp: dict[str, Any]) -> None:
+async def upsert_opportunity(opp: dict[str, Any]) -> None:
+    """Insert or refresh an active opportunity.
+
+    A partial unique index on (type_id, target_station_id) WHERE active=TRUE
+    means each item/hub pair has exactly one live row.  Subsequent scans update
+    the prices, supply, and margin rather than creating a duplicate.
+    """
     await pool().execute(
         """
         INSERT INTO opportunities
             (type_id, type_name, target_station_id, target_hub_name,
              supply_station_id, avg_daily_volume, current_supply_units,
              shortage_ratio, jita_sell_price, target_sell_price,
-             shipping_cost, total_cost, expected_net_revenue, margin_pct)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+             shipping_cost, total_cost, expected_net_revenue, margin_pct,
+             detected_at, active)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW(), TRUE)
+        ON CONFLICT (type_id, target_station_id)
+        WHERE active = TRUE
+        DO UPDATE SET
+            type_name            = EXCLUDED.type_name,
+            avg_daily_volume     = EXCLUDED.avg_daily_volume,
+            current_supply_units = EXCLUDED.current_supply_units,
+            shortage_ratio       = EXCLUDED.shortage_ratio,
+            jita_sell_price      = EXCLUDED.jita_sell_price,
+            target_sell_price    = EXCLUDED.target_sell_price,
+            shipping_cost        = EXCLUDED.shipping_cost,
+            total_cost           = EXCLUDED.total_cost,
+            expected_net_revenue = EXCLUDED.expected_net_revenue,
+            margin_pct           = EXCLUDED.margin_pct,
+            detected_at          = NOW()
         """,
         opp["type_id"], opp["type_name"], opp["target_station_id"],
         opp["target_hub_name"], opp["supply_station_id"],
@@ -279,6 +300,10 @@ async def insert_opportunity(opp: dict[str, Any]) -> None:
         opp["shipping_cost"], opp["total_cost"],
         opp["expected_net_revenue"], opp["margin_pct"],
     )
+
+
+# Keep old name as alias so nothing else breaks
+insert_opportunity = upsert_opportunity
 
 
 async def get_recent_opportunities(limit: int = 50) -> list[asyncpg.Record]:

@@ -101,6 +101,11 @@ CREATE TABLE IF NOT EXISTS opportunities (
 CREATE INDEX IF NOT EXISTS idx_opps_active_margin ON opportunities (active, margin_pct DESC, detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_opps_type ON opportunities (type_id, detected_at DESC);
 
+-- Prevents duplicate rows per item+hub — upsert refreshes the existing row
+CREATE UNIQUE INDEX IF NOT EXISTS idx_opps_active_unique
+    ON opportunities (type_id, target_station_id)
+    WHERE active = TRUE;
+
 -- Prune old order data (called by agent nightly)
 CREATE OR REPLACE FUNCTION prune_old_orders() RETURNS void LANGUAGE sql AS $$
     DELETE FROM market_orders WHERE captured_at < NOW() - INTERVAL '25 hours';
