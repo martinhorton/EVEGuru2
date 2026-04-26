@@ -43,6 +43,15 @@ services:
       SALES_TAX_PCT: ${SALES_TAX_PCT:-3.6}
       BROKER_FEE_PCT: ${BROKER_FEE_PCT:-3.0}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # AI-powered daily email reports
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SMTP_HOST:     ${SMTP_HOST:-}
+      SMTP_PORT:     ${SMTP_PORT:-587}
+      SMTP_USER:     ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM:     ${SMTP_FROM:-eveguru2@localhost}
+      REPORT_TO:     ${REPORT_TO:-}
+      REPORT_HOUR:   ${REPORT_HOUR:-7}
     volumes:
       - ./logs:/app/logs
 

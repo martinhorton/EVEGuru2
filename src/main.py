@@ -11,10 +11,11 @@ import asyncio
 import logging
 import signal
 import sys
+from datetime import datetime, timedelta, timezone
 
 from . import config, database
 from .esi_client import ESIClient
-from .agents import history_agent, order_agent, arbitrage_agent
+from .agents import history_agent, order_agent, arbitrage_agent, report_agent
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -104,6 +105,35 @@ async def arbitrage_loop() -> None:
                 log.exception("[db] Error pruning old orders")
 
 
+async def report_loop() -> None:
+    """Send daily market-opportunity emails at config.REPORT_HOUR_UTC."""
+    while not _shutdown.is_set():
+        now      = datetime.now(timezone.utc)
+        next_run = now.replace(
+            hour=config.REPORT_HOUR_UTC, minute=0, second=0, microsecond=0
+        )
+        if next_run <= now:
+            next_run += timedelta(days=1)
+
+        wait_secs = (next_run - now).total_seconds()
+        log.info("[report] Next run at %s UTC (in %.0f min)",
+                 next_run.strftime("%H:%M"), wait_secs / 60)
+
+        try:
+            await asyncio.wait_for(_shutdown.wait(), timeout=wait_secs)
+            return  # clean shutdown
+        except asyncio.TimeoutError:
+            pass
+
+        if _shutdown.is_set():
+            break
+
+        try:
+            await report_agent.run_once()
+        except Exception:
+            log.exception("[report] Error during daily report")
+
+
 async def main() -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -118,6 +148,7 @@ async def main() -> None:
             history_loop(esi),
             order_loop(esi),
             arbitrage_loop(),
+            report_loop(),
         )
 
     await database.close_pool()

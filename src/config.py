@@ -49,3 +49,15 @@ HISTORY_SCAN_INTERVAL_S = 23 * 3600
 
 # Max concurrent ESI requests
 ESI_CONCURRENCY = 20
+
+# ── Daily email reports ────────────────────────────────────────────────────────
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+SMTP_HOST     = os.getenv("SMTP_HOST",     "")
+SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER     = os.getenv("SMTP_USER",     "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM     = os.getenv("SMTP_FROM",     "eveguru2@localhost")
+
+REPORT_TO       = os.getenv("REPORT_TO",    "")
+REPORT_HOUR_UTC = int(os.getenv("REPORT_HOUR", "7"))   # UTC hour to send (0–23)
