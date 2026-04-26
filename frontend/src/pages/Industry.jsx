@@ -44,15 +44,20 @@ function SearchBox({ onSelect }) {
   const [results, setResults]   = useState([])
   const [loading, setLoading]   = useState(false)
   const [focused, setFocused]   = useState(false)
+  const [searchErr, setSearchErr] = useState(null)
   const timer                   = useRef(null)
 
   const search = useCallback((q) => {
-    if (q.length < 2) { setResults([]); return }
+    if (q.length < 2) { setResults([]); setSearchErr(null); return }
     setLoading(true)
+    setSearchErr(null)
     fetch(`/api/industry/search?q=${encodeURIComponent(q)}`)
-      .then(r => r.json())
-      .then(setResults)
-      .catch(() => setResults([]))
+      .then(r => {
+        if (!r.ok) throw new Error(`API ${r.status}: ${r.statusText}`)
+        return r.json()
+      })
+      .then(data => { setResults(data); if (data.length === 0) setSearchErr('No blueprints found — blueprint data may not be loaded yet (run: docker compose run --rm sde)') })
+      .catch(e => { setResults([]); setSearchErr(e.message) })
       .finally(() => setLoading(false))
   }, [])
 
@@ -91,6 +96,7 @@ function SearchBox({ onSelect }) {
           ))}
         </ul>
       )}
+      {searchErr && <div className="ind-search-error">{searchErr}</div>}
     </div>
   )
 }
