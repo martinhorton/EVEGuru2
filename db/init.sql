@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     shipping_cost           NUMERIC(20, 2),
     total_cost              NUMERIC(20, 2),
     expected_net_revenue    NUMERIC(20, 2),
-    margin_pct              NUMERIC(8, 4),
+    margin_pct              NUMERIC(12, 4),
     detected_at             TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     active                  BOOLEAN       NOT NULL DEFAULT TRUE
 );

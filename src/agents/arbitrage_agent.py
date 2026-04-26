@@ -50,6 +50,9 @@ def _calc_opportunity(
     if margin_pct < MIN_MARGIN_PCT:
         return None
 
+    # Cap at 9999% — higher values almost always mean stale / unreliable price data
+    margin_pct = min(margin_pct, 9999.0)
+
     shortage_ratio = avg_daily_volume / max(current_supply, 1)
 
     return {
