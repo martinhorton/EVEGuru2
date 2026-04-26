@@ -12,8 +12,9 @@ import logging
 
 from ..config import (
     Hub, SUPPLY_HUB, TARGET_HUBS,
-    MAX_DAYS_SUPPLY, MIN_DAILY_VOLUME, MIN_MARGIN_PCT, PRICE_SANITY_MULTIPLIER,
-    SHIPPING_ISK_PER_M3, SELL_OVERHEAD_PCT, DEMAND_WINDOW_DAYS,
+    MAX_DAYS_SUPPLY, MIN_DAILY_VOLUME, MIN_MARGIN_PCT, MIN_PROFIT_ISK,
+    PRICE_SANITY_MULTIPLIER, SHIPPING_ISK_PER_M3, SELL_OVERHEAD_PCT,
+    DEMAND_WINDOW_DAYS,
 )
 from .. import database
 
@@ -47,7 +48,11 @@ def _calc_opportunity(
 
     margin_pct = (profit / total_cost) * 100.0
 
-    if margin_pct < MIN_MARGIN_PCT:
+    # Accept if EITHER the % margin is good enough OR the absolute ISK profit
+    # per unit clears the floor.  The ISK floor catches high-value items (e.g.
+    # large ships) where significant ISK profit is produced at a low % margin
+    # because shipping cost is a large fraction of unit price.
+    if margin_pct < MIN_MARGIN_PCT and profit < MIN_PROFIT_ISK:
         return None
 
     # Store days-of-supply (supply / demand) — matches "D.O.S." column in

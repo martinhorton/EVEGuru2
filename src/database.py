@@ -172,17 +172,21 @@ async def get_avg_daily_volume(
 async def get_active_types_for_region(
     region_id: int, days: int = 7, min_volume: float = 10
 ) -> list[int]:
-    """Type IDs with meaningful recent volume in a region."""
+    """Type IDs with meaningful recent volume in a region.
+
+    Uses the same SUM(volume)/days calendar-day average as get_avg_daily_volume
+    so the pre-filter and per-type check are consistent.
+    """
     rows = await pool().fetch(
         """
         SELECT type_id
         FROM market_history
         WHERE region_id = $1
-          AND date >= CURRENT_DATE - ($2 || ' days')::interval
+          AND date >= CURRENT_DATE - ($2 * INTERVAL '1 day')
         GROUP BY type_id
-        HAVING AVG(volume) >= $3
+        HAVING (SUM(volume)::float / $2) >= $3
         """,
-        region_id, str(days), min_volume,
+        region_id, days, min_volume,
     )
     return [r["type_id"] for r in rows]
 

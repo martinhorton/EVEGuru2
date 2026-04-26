@@ -32,8 +32,14 @@ DATABASE_URL        = os.environ["DATABASE_URL"]
 # Commercial apps typically show everything (no cap); 30 is a sensible default
 # that excludes deeply over-stocked markets while catching price-spread trades.
 MAX_DAYS_SUPPLY     = float(os.getenv("MAX_DAYS_SUPPLY",      "30"))
-MIN_DAILY_VOLUME    = float(os.getenv("MIN_DAILY_VOLUME",     "2"))
+MIN_DAILY_VOLUME    = float(os.getenv("MIN_DAILY_VOLUME",     "1.0"))
 MIN_MARGIN_PCT           = float(os.getenv("MIN_MARGIN_PCT",           "10.0"))
+# Absolute ISK profit floor per unit (alternative to margin %).
+# An opportunity passes if EITHER margin_pct >= MIN_MARGIN_PCT OR
+# profit_per_unit >= MIN_PROFIT_ISK.  This catches high-value items
+# (e.g. large ships) where big absolute profit produces a low % margin
+# because shipping cost is large relative to unit price.
+MIN_PROFIT_ISK           = float(os.getenv("MIN_PROFIT_ISK",           "500000"))
 # If the current sell price at the target hub exceeds this multiple of the
 # 7-day historical average, treat it as a scam/stale order and substitute
 # the historical average as the expected sell price instead.
