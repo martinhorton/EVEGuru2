@@ -54,6 +54,7 @@ def _calc_opportunity(
     margin_pct = min(margin_pct, 9999.0)
 
     shortage_ratio = avg_daily_volume / max(current_supply, 1)
+    shortage_ratio = min(shortage_ratio, 999999.0)  # cap: zero-supply items
 
     return {
         "type_id":              type_id,

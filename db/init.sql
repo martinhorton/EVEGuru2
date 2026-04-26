@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     supply_station_id       BIGINT        NOT NULL DEFAULT 60003760,
     avg_daily_volume        NUMERIC(15, 4),
     current_supply_units    BIGINT,
-    shortage_ratio          NUMERIC(10, 4),
+    shortage_ratio          NUMERIC(15, 4),
     jita_sell_price         NUMERIC(20, 2),
     target_sell_price       NUMERIC(20, 2),
     shipping_cost           NUMERIC(20, 2),
