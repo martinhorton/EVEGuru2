@@ -14,6 +14,12 @@ log = logging.getLogger("uvicorn")
 
 _pool: asyncpg.Pool | None = None
 
+# Fee config — mirrors agent .env values so the UI stays consistent
+PRICE_SANITY_MULTIPLIER = float(os.getenv("PRICE_SANITY_MULTIPLIER", "5.0"))
+_BROKER_FEE_PCT = float(os.getenv("BROKER_FEE_PCT", "3.0"))
+_SALES_TAX_PCT  = float(os.getenv("SALES_TAX_PCT",  "3.6"))
+SELL_OVERHEAD_PCT = (_BROKER_FEE_PCT + _SALES_TAX_PCT) / 100.0
+
 # Station IDs for the five major hubs
 HUB_STATIONS = (60003760, 60008494, 60011866, 60004588, 60005686)
 
@@ -53,6 +59,12 @@ app.add_middleware(
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/config")
+async def config():
+    """Client-facing config so the UI uses the same fee rates as the agent."""
+    return {"sell_overhead_pct": SELL_OVERHEAD_PCT}
 
 
 @app.get("/api/stats")
@@ -346,9 +358,16 @@ async def material_prices(type_ids: str = Query(...)):
 async def hub_sell_prices(type_id: int):
     """
     Cheapest current sell price at each hub for a given product type_id.
-    Used to compare production cost vs sell price across hubs.
+    Applies the same price-sanity check as the arbitrage agent: if the live
+    order is more than PRICE_SANITY_MULTIPLIER × the 7-day regional average,
+    the historical average is used instead (filters scam/stale listings).
+    Falls back to the 7-day average when no live orders exist.
     """
-    rows = await _pool.fetch("""
+    all_station_ids = [h["station_id"] for h in _HUB_META]
+    all_region_ids  = [h["region_id"]  for h in _HUB_META]
+
+    # Live cheapest sell at each hub
+    order_rows = await _pool.fetch("""
         SELECT location_id, MIN(price)::float AS sell_price
         FROM market_orders
         WHERE type_id      = $1
@@ -356,32 +375,36 @@ async def hub_sell_prices(type_id: int):
           AND is_buy_order = FALSE
           AND captured_at >= NOW() - INTERVAL '15 minutes'
         GROUP BY location_id
-    """, type_id, [h["station_id"] for h in _HUB_META])
+    """, type_id, all_station_ids)
+    live_prices = {r["location_id"]: r["sell_price"] for r in order_rows}
 
-    price_map = {r["location_id"]: r["sell_price"] for r in rows}
+    # 7-day regional averages for all hubs (sanity check + fallback)
+    hist_rows = await _pool.fetch("""
+        SELECT region_id, AVG(average)::float AS price
+        FROM market_history
+        WHERE type_id   = $1
+          AND region_id = ANY($2::integer[])
+          AND date      >= CURRENT_DATE - INTERVAL '7 days'
+        GROUP BY region_id
+    """, type_id, all_region_ids)
+    region_avg = {r["region_id"]: r["price"] for r in hist_rows}
 
-    # Fall back to recent history average if no live orders at a hub
-    missing_stations = [h for h in _HUB_META if h["station_id"] not in price_map]
-    if missing_stations:
-        missing_regions = [h["region_id"] for h in missing_stations]
-        hist_rows = await _pool.fetch("""
-            SELECT region_id, AVG(average)::float AS price
-            FROM market_history
-            WHERE type_id   = $1
-              AND region_id = ANY($2::integer[])
-              AND date      >= CURRENT_DATE - INTERVAL '7 days'
-            GROUP BY region_id
-        """, type_id, missing_regions)
-        region_price = {r["region_id"]: r["price"] for r in hist_rows}
-        for h in missing_stations:
-            if h["region_id"] in region_price:
-                price_map[h["station_id"]] = region_price[h["region_id"]]
+    result = []
+    for h in _HUB_META:
+        live  = live_prices.get(h["station_id"])
+        avg   = region_avg.get(h["region_id"])
 
-    return [
-        {
+        if live is None:
+            sell_price = avg  # no live orders — use history
+        elif avg and live > avg * PRICE_SANITY_MULTIPLIER:
+            sell_price = avg  # scam/stale listing — use history
+        else:
+            sell_price = live
+
+        result.append({
             "station_id": h["station_id"],
             "hub_name":   h["short"],
-            "sell_price": price_map.get(h["station_id"]),
-        }
-        for h in _HUB_META
-    ]
+            "sell_price": sell_price,
+        })
+
+    return result

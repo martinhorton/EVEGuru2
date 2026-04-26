@@ -20,7 +20,7 @@ const FACILITIES = [
   ['Engineering Complex (T2 rig)',   3.4],
 ]
 
-const SELL_OVERHEAD = 0.066  // default broker 3% + sales tax 3.6%
+const DEFAULT_SELL_OVERHEAD = 0.066  // fallback if /api/config not yet loaded
 
 function secondsToHMS(s) {
   if (!s) return '—'
@@ -192,7 +192,7 @@ function MaterialsTable({ materials, prices, runs, me, facilityMePct, totalCost,
   )
 }
 
-function HubComparison({ hubPrices, costPerUnit, productQtyPerRun }) {
+function HubComparison({ hubPrices, costPerUnit, productQtyPerRun, sellOverhead }) {
   if (!hubPrices.length) return null
   return (
     <div className="ind-section">
@@ -217,7 +217,7 @@ function HubComparison({ hubPrices, costPerUnit, productQtyPerRun }) {
                 <td colSpan={5} style={{ color: 'var(--text-muted)', textAlign: 'center' }}>no market data</td>
               </tr>
             )
-            const net     = sell * (1 - SELL_OVERHEAD)
+            const net     = sell * (1 - sellOverhead)
             const profit  = net - costPerUnit
             const margin  = costPerUnit > 0 ? (profit / costPerUnit) * 100 : 0
             const color   = margin >= 20 ? '#4ade80' : margin >= 10 ? '#e8b84b' : margin >= 0 ? '#fb923c' : '#f87171'
@@ -244,7 +244,7 @@ function HubComparison({ hubPrices, costPerUnit, productQtyPerRun }) {
         </tbody>
       </table>
       <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-        Net revenue = sell price × (1 − 6.6% broker + sales tax). Adjust in .env if your rates differ.
+        Net revenue = sell price × (1 − {(sellOverhead * 100).toFixed(1)}% broker + sales tax). Adjust BROKER_FEE_PCT / SALES_TAX_PCT in .env.
       </p>
     </div>
   )
@@ -257,10 +257,19 @@ export default function Industry() {
   const [prices, setPrices]           = useState({})     // material type_id → Jita price
   const [hubPrices, setHubPrices]     = useState([])     // per-hub sell prices for product
   const [loadingBp, setLoadingBp]     = useState(false)
+  const [sellOverhead, setSellOverhead] = useState(DEFAULT_SELL_OVERHEAD)
   const [me, setMe]                   = useState(0)
   const [te, setTe]                   = useState(0)
   const [runs, setRuns]               = useState(1)
   const [facilityIdx, setFacilityIdx] = useState(0)
+
+  // Load fee config from server once on mount
+  useEffect(() => {
+    fetch('/api/config')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.sell_overhead_pct != null) setSellOverhead(data.sell_overhead_pct) })
+      .catch(() => {})
+  }, [])
 
   const facilityMePct = FACILITIES[facilityIdx][1]
 
@@ -396,6 +405,7 @@ export default function Industry() {
             hubPrices={hubPrices}
             costPerUnit={costPerUnit}
             productQtyPerRun={productQtyPerRun}
+            sellOverhead={sellOverhead}
           />
         </>
       )}
