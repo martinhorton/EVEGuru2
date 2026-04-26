@@ -71,15 +71,36 @@ async def run_once(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
 
 
 async def resolve_unknown_types(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
-    """Fetch name + packaged volume for any type not yet in item_types."""
-    rows = await database.pool().fetch("SELECT type_id FROM item_types")
-    known = {r["type_id"] for r in rows}
-    unknown = [t for t in type_ids if t not in known]
+    """Fetch name + packaged volume for any type not yet in item_types.
+
+    Types already populated by the SDE loader (group_id IS NOT NULL) are
+    skipped entirely — no ESI call needed.  Only truly unknown types (e.g.
+    very recently released items not yet in the SDE) hit the ESI.
+    """
+    # Types with full SDE data already have group_id set
+    rows = await database.pool().fetch(
+        "SELECT type_id FROM item_types WHERE group_id IS NOT NULL"
+    )
+    sde_known = {r["type_id"] for r in rows}
+
+    # Types in DB but without SDE data (legacy ESI-resolved rows)
+    rows_esi = await database.pool().fetch(
+        "SELECT type_id FROM item_types WHERE group_id IS NULL"
+    )
+    esi_known = {r["type_id"] for r in rows_esi}
+
+    all_known = sde_known | esi_known
+    unknown = [t for t in type_ids if t not in all_known]
+
+    sde_count = sum(1 for t in type_ids if t in sde_known)
+    if sde_count:
+        log.debug("[history] Region %s: %d types already resolved via SDE",
+                  region_id, sde_count)
 
     if not unknown:
         return
 
-    log.info("[history] Resolving %d unknown type names for region %s",
+    log.info("[history] Resolving %d unknown types via ESI for region %s",
              len(unknown), region_id)
 
     async def resolve_one(type_id: int) -> None:
@@ -97,4 +118,4 @@ async def resolve_unknown_types(esi: ESIClient, region_id: int, type_ids: list[i
         chunk = unknown[i : i + chunk_size]
         await asyncio.gather(*[resolve_one(tid) for tid in chunk])
 
-    log.info("[history] Type resolution complete for region %s", region_id)
+    log.info("[history] ESI type resolution complete for region %s", region_id)

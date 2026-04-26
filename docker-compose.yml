@@ -15,6 +15,19 @@ services:
       timeout: 5s
       retries: 5
 
+  sde:
+    build: ./sde
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-eveguru}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-eveguru}
+      SDE_CACHE_DIR: /sde_cache
+      SDE_REFRESH_DAYS: ${SDE_REFRESH_DAYS:-30}
+    volumes:
+      - sde_cache:/sde_cache
+
   agent:
     build: .
     restart: unless-stopped
@@ -61,3 +74,4 @@ services:
 volumes:
   postgres_data:
   ssl_certs:
+  sde_cache:

@@ -84,42 +84,77 @@ async def hubs():
 async def opportunities(
     hub: Optional[str] = Query(None),
     min_margin: float = Query(0.0),
+    category_id: Optional[int] = Query(None),
+    group_id: Optional[int] = Query(None),
     limit: int = Query(1000, le=5000),
     offset: int = Query(0),
 ):
     rows = await _pool.fetch("""
         SELECT
-            id,
-            type_id,
-            type_name,
-            target_station_id,
-            target_hub_name,
-            avg_daily_volume::float,
-            current_supply_units,
-            shortage_ratio::float,
-            jita_sell_price::float,
-            target_sell_price::float,
-            shipping_cost::float,
-            total_cost::float,
-            expected_net_revenue::float,
-            margin_pct::float,
-            ((expected_net_revenue - total_cost) * avg_daily_volume)::float  AS estimated_daily_profit,
-            detected_at
-        FROM opportunities
-        WHERE active = TRUE
-          AND ($1::text IS NULL OR target_hub_name ILIKE '%' || $1 || '%')
-          AND margin_pct >= $2
-          AND detected_at >= NOW() - INTERVAL '2 hours'
-        ORDER BY margin_pct DESC
-        LIMIT $3 OFFSET $4
-    """, hub, min_margin, limit, offset)
+            o.id,
+            o.type_id,
+            o.type_name,
+            o.target_station_id,
+            o.target_hub_name,
+            o.avg_daily_volume::float,
+            o.current_supply_units,
+            o.shortage_ratio::float,
+            o.jita_sell_price::float,
+            o.target_sell_price::float,
+            o.shipping_cost::float,
+            o.total_cost::float,
+            o.expected_net_revenue::float,
+            o.margin_pct::float,
+            ((o.expected_net_revenue - o.total_cost) * o.avg_daily_volume)::float AS estimated_daily_profit,
+            o.detected_at,
+            it.group_id,
+            it.group_name,
+            it.category_id,
+            it.category_name
+        FROM opportunities o
+        LEFT JOIN item_types it ON it.type_id = o.type_id
+        WHERE o.active = TRUE
+          AND ($1::text IS NULL OR o.target_hub_name ILIKE '%' || $1 || '%')
+          AND o.margin_pct >= $2
+          AND o.detected_at >= NOW() - INTERVAL '2 hours'
+          AND ($3::integer IS NULL OR it.category_id = $3)
+          AND ($4::integer IS NULL OR it.group_id    = $4)
+        ORDER BY o.margin_pct DESC
+        LIMIT $5 OFFSET $6
+    """, hub, min_margin, category_id, group_id, limit, offset)
+    return [_row(r) for r in rows]
+
+
+@app.get("/api/categories")
+async def categories():
+    """All item categories that appear in item_types (populated by SDE loader)."""
+    rows = await _pool.fetch("""
+        SELECT DISTINCT category_id, category_name
+        FROM item_types
+        WHERE category_id IS NOT NULL
+        ORDER BY category_name
+    """)
+    return [_row(r) for r in rows]
+
+
+@app.get("/api/categories/{category_id}/groups")
+async def groups_for_category(category_id: int):
+    rows = await _pool.fetch("""
+        SELECT DISTINCT group_id, group_name
+        FROM item_types
+        WHERE category_id = $1
+          AND group_id IS NOT NULL
+        ORDER BY group_name
+    """, category_id)
     return [_row(r) for r in rows]
 
 
 @app.get("/api/items/{type_id}")
 async def item_info(type_id: int):
     row = await _pool.fetchrow(
-        "SELECT type_id, name, packaged_volume::float FROM item_types WHERE type_id = $1",
+        """SELECT type_id, name, packaged_volume::float,
+                  group_id, group_name, category_id, category_name, market_group_id
+           FROM item_types WHERE type_id = $1""",
         type_id,
     )
     if not row:

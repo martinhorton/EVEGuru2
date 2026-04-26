@@ -31,6 +31,16 @@ const COL_DEFS = [
     filter: 'agTextColumnFilter',
   },
   {
+    field: 'category_name', headerName: 'Category', width: 130,
+    filter: 'agTextColumnFilter',
+    cellStyle: { color: 'var(--text-dim)', fontSize: 12 },
+  },
+  {
+    field: 'group_name', headerName: 'Group', width: 140,
+    filter: 'agTextColumnFilter',
+    cellStyle: { color: 'var(--text-dim)', fontSize: 12 },
+  },
+  {
     field: 'target_hub_name', headerName: 'Hub', width: 120,
     valueFormatter: p => p.value?.replace(/\s*-.*$/, '') ?? '—',
     filter: 'agTextColumnFilter',
@@ -89,24 +99,49 @@ const COL_DEFS = [
 ]
 
 export default function Opportunities() {
-  const [rows, setRows]           = useState([])
-  const [loading, setLoading]     = useState(true)
-  const [error, setError]         = useState(null)
-  const [hub, setHub]             = useState('All')
-  const [minMargin, setMinMargin] = useState(10)
-  const navigate                  = useNavigate()
-  const gridRef                   = useRef()
+  const [rows, setRows]               = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [error, setError]             = useState(null)
+  const [hub, setHub]                 = useState('All')
+  const [minMargin, setMinMargin]     = useState(10)
+  const [categories, setCategories]   = useState([])
+  const [selectedCat, setSelectedCat] = useState('')
+  const [groups, setGroups]           = useState([])
+  const [selectedGroup, setSelectedGroup] = useState('')
+  const navigate = useNavigate()
+  const gridRef  = useRef()
+
+  // Load category list on mount
+  useEffect(() => {
+    fetch('/api/categories')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setCategories(data))
+      .catch(() => {})
+  }, [])
+
+  // Load groups when category changes
+  useEffect(() => {
+    setSelectedGroup('')
+    setGroups([])
+    if (!selectedCat) return
+    fetch(`/api/categories/${selectedCat}/groups`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setGroups(data))
+      .catch(() => {})
+  }, [selectedCat])
 
   const fetchData = useCallback(() => {
     setLoading(true)
     const params = new URLSearchParams({ min_margin: minMargin })
-    if (hub !== 'All') params.set('hub', hub)
+    if (hub !== 'All')   params.set('hub', hub)
+    if (selectedCat)     params.set('category_id', selectedCat)
+    if (selectedGroup)   params.set('group_id', selectedGroup)
     fetch('/api/opportunities?' + params)
       .then(r => { if (!r.ok) throw new Error(r.statusText); return r.json() })
       .then(data => { setRows(data); setError(null) })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [hub, minMargin])
+  }, [hub, minMargin, selectedCat, selectedGroup])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -135,6 +170,35 @@ export default function Opportunities() {
         {HUBS.map(h => (
           <button key={h} className={'hub-btn' + (hub === h ? ' active' : '')} onClick={() => setHub(h)}>{h}</button>
         ))}
+
+        <span className="filter-label" style={{ marginLeft: 16 }}>Category:</span>
+        <select
+          className="filter-select"
+          value={selectedCat}
+          onChange={e => setSelectedCat(e.target.value)}
+        >
+          <option value="">All</option>
+          {categories.map(c => (
+            <option key={c.category_id} value={c.category_id}>{c.category_name}</option>
+          ))}
+        </select>
+
+        {groups.length > 0 && (
+          <>
+            <span className="filter-label">Group:</span>
+            <select
+              className="filter-select"
+              value={selectedGroup}
+              onChange={e => setSelectedGroup(e.target.value)}
+            >
+              <option value="">All</option>
+              {groups.map(g => (
+                <option key={g.group_id} value={g.group_id}>{g.group_name}</option>
+              ))}
+            </select>
+          </>
+        )}
+
         <span className="filter-label" style={{ marginLeft: 16 }}>Min margin:</span>
         <input
           className="margin-input"

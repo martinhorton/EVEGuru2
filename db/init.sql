@@ -18,10 +18,23 @@ INSERT INTO hubs (name, region_id, station_id, is_supply, active) VALUES
 ON CONFLICT (station_id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS item_types (
-    type_id      INTEGER PRIMARY KEY,
-    name         VARCHAR(300),
+    type_id         INTEGER PRIMARY KEY,
+    name            VARCHAR(300),
     packaged_volume NUMERIC(18, 4),
-    last_updated TIMESTAMPTZ
+    group_id        INTEGER,
+    group_name      VARCHAR(200),
+    category_id     INTEGER,
+    category_name   VARCHAR(200),
+    market_group_id INTEGER,
+    last_updated    TIMESTAMPTZ
+);
+
+-- Track SDE import history
+CREATE TABLE IF NOT EXISTS sde_meta (
+    id          SERIAL PRIMARY KEY,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    type_count  INTEGER,
+    sde_url     TEXT
 );
 
 -- Daily OHLCV history per region

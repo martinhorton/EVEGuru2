@@ -40,17 +40,35 @@ def pool() -> asyncpg.Pool:
 # item_types
 # ---------------------------------------------------------------------------
 
-async def upsert_type(type_id: int, name: str, packaged_volume: float) -> None:
+async def upsert_type(
+    type_id: int,
+    name: str,
+    packaged_volume: float,
+    group_id: int | None = None,
+    group_name: str | None = None,
+    category_id: int | None = None,
+    category_name: str | None = None,
+    market_group_id: int | None = None,
+) -> None:
     await pool().execute(
         """
-        INSERT INTO item_types (type_id, name, packaged_volume, last_updated)
-        VALUES ($1, $2, $3, NOW())
+        INSERT INTO item_types
+            (type_id, name, packaged_volume,
+             group_id, group_name, category_id, category_name, market_group_id,
+             last_updated)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
         ON CONFLICT (type_id) DO UPDATE
-            SET name = EXCLUDED.name,
-                packaged_volume = EXCLUDED.packaged_volume,
-                last_updated = NOW()
+            SET name             = EXCLUDED.name,
+                packaged_volume  = EXCLUDED.packaged_volume,
+                group_id         = COALESCE(EXCLUDED.group_id,        item_types.group_id),
+                group_name       = COALESCE(EXCLUDED.group_name,       item_types.group_name),
+                category_id      = COALESCE(EXCLUDED.category_id,      item_types.category_id),
+                category_name    = COALESCE(EXCLUDED.category_name,    item_types.category_name),
+                market_group_id  = COALESCE(EXCLUDED.market_group_id,  item_types.market_group_id),
+                last_updated     = NOW()
         """,
         type_id, name, packaged_volume,
+        group_id, group_name, category_id, category_name, market_group_id,
     )
 
 
@@ -66,6 +84,33 @@ async def get_type_volume(type_id: int) -> float | None:
         "SELECT packaged_volume FROM item_types WHERE type_id = $1", type_id
     )
     return float(row["packaged_volume"]) if row and row["packaged_volume"] else None
+
+
+async def get_categories() -> list[dict]:
+    """All distinct categories that have at least one item_type in the DB."""
+    rows = await pool().fetch(
+        """
+        SELECT DISTINCT category_id, category_name
+        FROM item_types
+        WHERE category_id IS NOT NULL
+        ORDER BY category_name
+        """
+    )
+    return [{"category_id": r["category_id"], "category_name": r["category_name"]} for r in rows]
+
+
+async def get_groups_for_category(category_id: int) -> list[dict]:
+    rows = await pool().fetch(
+        """
+        SELECT DISTINCT group_id, group_name
+        FROM item_types
+        WHERE category_id = $1
+          AND group_id IS NOT NULL
+        ORDER BY group_name
+        """,
+        category_id,
+    )
+    return [{"group_id": r["group_id"], "group_name": r["group_name"]} for r in rows]
 
 
 # ---------------------------------------------------------------------------
