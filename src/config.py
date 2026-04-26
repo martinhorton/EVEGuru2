@@ -27,8 +27,12 @@ ESI_DATASOURCE  = "tranquility"
 ESI_USER_AGENT  = "EVEGuru2/1.0 (market arbitrage scanner; contact martin.horton@ashandlacy.com)"
 
 DATABASE_URL        = os.environ["DATABASE_URL"]
-SHORTAGE_RATIO      = float(os.getenv("SHORTAGE_RATIO",      "2.0"))
-MIN_DAILY_VOLUME    = float(os.getenv("MIN_DAILY_VOLUME",     "10"))
+# Maximum days of supply already at the target hub before we ignore the item.
+# Days of supply = current_supply / avg_daily_demand.
+# Commercial apps typically show everything (no cap); 30 is a sensible default
+# that excludes deeply over-stocked markets while catching price-spread trades.
+MAX_DAYS_SUPPLY     = float(os.getenv("MAX_DAYS_SUPPLY",      "30"))
+MIN_DAILY_VOLUME    = float(os.getenv("MIN_DAILY_VOLUME",     "2"))
 MIN_MARGIN_PCT           = float(os.getenv("MIN_MARGIN_PCT",           "10.0"))
 # If the current sell price at the target hub exceeds this multiple of the
 # 7-day historical average, treat it as a scam/stale order and substitute

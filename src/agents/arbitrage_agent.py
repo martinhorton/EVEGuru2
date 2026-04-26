@@ -12,7 +12,7 @@ import logging
 
 from ..config import (
     Hub, SUPPLY_HUB, TARGET_HUBS,
-    SHORTAGE_RATIO, MIN_DAILY_VOLUME, MIN_MARGIN_PCT, PRICE_SANITY_MULTIPLIER,
+    MAX_DAYS_SUPPLY, MIN_DAILY_VOLUME, MIN_MARGIN_PCT, PRICE_SANITY_MULTIPLIER,
     SHIPPING_ISK_PER_M3, SELL_OVERHEAD_PCT, DEMAND_WINDOW_DAYS,
 )
 from .. import database
@@ -50,8 +50,10 @@ def _calc_opportunity(
     if margin_pct < MIN_MARGIN_PCT:
         return None
 
-    shortage_ratio = avg_daily_volume / max(current_supply, 1)
-    shortage_ratio = min(shortage_ratio, 999999.0)  # cap: zero-supply items
+    # Store days-of-supply (supply / demand) — matches "D.O.S." column in
+    # commercial EVE trading apps.  Cap at 9999 for zero-demand edge cases.
+    shortage_ratio = current_supply / max(avg_daily_volume, 0.001)
+    shortage_ratio = min(shortage_ratio, 9999.0)
 
     return {
         "type_id":              type_id,
@@ -102,10 +104,11 @@ async def run_once() -> None:
                 hub.station_id, type_id
             )
 
-            # Skip if supply is adequate (ratio below threshold)
-            if current_supply > 0:
-                ratio = avg_vol / current_supply
-                if ratio < SHORTAGE_RATIO:
+            # Skip if the hub already has more than MAX_DAYS_SUPPLY days of stock.
+            # days_of_supply = supply / daily_demand.  Items with 0 supply always pass.
+            if current_supply > 0 and avg_vol > 0:
+                days_of_supply = current_supply / avg_vol
+                if days_of_supply > MAX_DAYS_SUPPLY:
                     continue
 
             # Shortage confirmed — check Jita

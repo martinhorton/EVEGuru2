@@ -16,12 +16,14 @@ function marginStyle(params) {
   return { color: '#fb923c' }
 }
 
-function shortageStyle(params) {
+function dosStyle(params) {
+  // D.O.S. = days of supply.  Low = shortage (good opportunity), high = oversupplied.
   const v = params.value
   if (v == null) return {}
-  if (v >= 10) return { color: '#f87171', fontWeight: 600 }
-  if (v >= 5)  return { color: '#fb923c' }
-  return {}
+  if (v < 1)  return { color: '#f87171', fontWeight: 600 }  // under 1 day — critical shortage
+  if (v < 5)  return { color: '#fb923c' }                   // under 5 days — low stock
+  if (v < 14) return { color: '#e8b84b' }                   // under 2 weeks — moderate
+  return { color: 'var(--text-dim)' }                       // well supplied
 }
 
 const COL_DEFS = [
@@ -56,9 +58,9 @@ const COL_DEFS = [
     type: 'numericColumn',
   },
   {
-    field: 'shortage_ratio', headerName: 'Shortage ×', width: 110,
-    valueFormatter: p => p.value != null ? p.value.toFixed(1) + '×' : '—',
-    cellStyle: shortageStyle,
+    field: 'shortage_ratio', headerName: 'D.O.S.', width: 90,
+    valueFormatter: p => p.value != null ? p.value.toFixed(1) + 'd' : '—',
+    cellStyle: dosStyle,
     type: 'numericColumn',
   },
   {

@@ -148,18 +148,25 @@ async def upsert_history_batch(rows: list[dict]) -> int:
 async def get_avg_daily_volume(
     region_id: int, type_id: int, days: int = 7
 ) -> float | None:
-    """Average daily volume over the last N days."""
+    """
+    Average daily volume over the last N calendar days.
+
+    Uses SUM/days rather than AVG(volume) so that days with zero trades
+    are included in the denominator — otherwise items that only trade on
+    some days get an inflated average.
+    """
     row = await pool().fetchrow(
         """
-        SELECT AVG(volume)::float AS avg_vol
+        SELECT (COALESCE(SUM(volume), 0)::float / $3) AS avg_vol
         FROM market_history
         WHERE region_id = $1
           AND type_id   = $2
           AND date      >= CURRENT_DATE - ($3 || ' days')::interval
         """,
-        region_id, type_id, str(days),
+        region_id, type_id, days,
     )
-    return row["avg_vol"] if row else None
+    v = row["avg_vol"] if row else None
+    return float(v) if v else None
 
 
 async def get_active_types_for_region(
