@@ -73,6 +73,10 @@ class ESIClient:
                             data = await resp.json(content_type=None)
                             return data, dict(resp.headers)
 
+                        if resp.status == 404:
+                            # Normal for market history — type has no data in this region
+                            return None, {}
+
                         if resp.status in (502, 503, 504):
                             wait = 2 ** attempt
                             log.warning("ESI %s for %s, retry in %ss", resp.status, path, wait)
