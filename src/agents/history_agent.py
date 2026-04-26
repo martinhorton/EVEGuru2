@@ -55,13 +55,14 @@ async def run_once(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
                 total_rows += inserted
                 batch.clear()
 
-    # Process in chunks to avoid building a massive task list
-    chunk_size = 100
+    # Smaller chunks — reduces burst of 404s that drain the ESI error budget
+    chunk_size = 20
     for i in range(0, len(type_ids), chunk_size):
         chunk = type_ids[i : i + chunk_size]
         await asyncio.gather(*[fetch_and_queue(tid) for tid in chunk])
-        log.debug("[history] Region %s: processed %d/%d types",
-                  region_id, min(i + chunk_size, len(type_ids)), len(type_ids))
+        if i % 1000 == 0 and i > 0:
+            log.info("[history] Region %s: processed %d/%d types",
+                     region_id, i, len(type_ids))
 
     if batch:
         total_rows += await database.upsert_history_batch(batch)

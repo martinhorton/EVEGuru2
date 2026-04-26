@@ -5,6 +5,7 @@ All market endpoints used here are public — no authentication required.
 
 import asyncio
 import logging
+import time
 import urllib.parse
 from typing import Any
 
@@ -23,6 +24,9 @@ class ESIClient:
         self._session: aiohttp.ClientSession | None = None
         self._etags: dict[str, str] = {}
         self._semaphore = asyncio.Semaphore(config.ESI_CONCURRENCY)
+        # Error budget tracking — ESI allows 100 errors per window
+        self._budget_remain: int = 100
+        self._budget_reset_at: float = 0.0   # epoch seconds
 
     async def __aenter__(self) -> "ESIClient":
         connector = aiohttp.TCPConnector(limit=config.ESI_CONCURRENCY + 5)
@@ -35,6 +39,28 @@ class ESIClient:
     async def __aexit__(self, *_: Any) -> None:
         if self._session:
             await self._session.close()
+
+    def _update_budget(self, headers: dict) -> None:
+        remain = headers.get("X-Esi-Error-Limit-Remain")
+        reset  = headers.get("X-Esi-Error-Limit-Reset")
+        if remain is not None:
+            self._budget_remain = int(remain)
+        if reset is not None:
+            self._budget_reset_at = time.monotonic() + int(reset)
+
+    async def _wait_if_budget_low(self) -> None:
+        """Block all requests if the ESI error budget is critically low."""
+        if self._budget_remain < 10:
+            sleep_for = max(0.0, self._budget_reset_at - time.monotonic()) + 2
+            log.warning(
+                "ESI error budget critical (%d remaining) — pausing %.0fs for reset",
+                self._budget_remain, sleep_for,
+            )
+            await asyncio.sleep(sleep_for)
+            self._budget_remain = 100  # will be corrected on next response
+        elif self._budget_remain < 25:
+            # Gentle throttle — add a small delay per request
+            await asyncio.sleep(0.5)
 
     async def _get(
         self, path: str, params: dict | None = None, retries: int = 3
@@ -51,6 +77,8 @@ class ESIClient:
         if cache_key in self._etags:
             req_headers["If-None-Match"] = self._etags[cache_key]
 
+        await self._wait_if_budget_low()
+
         for attempt in range(retries):
             async with self._semaphore:
                 try:
@@ -58,10 +86,7 @@ class ESIClient:
                     async with self._session.get(
                         url, params=merged, headers=req_headers
                     ) as resp:
-                        # Warn if we're burning through the error budget
-                        remain = resp.headers.get("X-Esi-Error-Limit-Remain")
-                        if remain and int(remain) < 20:
-                            log.warning("ESI error budget low: %s remaining", remain)
+                        self._update_budget(resp.headers)
 
                         if resp.status == 304:
                             return None, dict(resp.headers)
@@ -85,8 +110,9 @@ class ESIClient:
 
                         if resp.status == 420:
                             reset = int(resp.headers.get("X-Esi-Error-Limit-Reset", 60))
-                            log.error("ESI error limit hit, sleeping %ss", reset)
-                            await asyncio.sleep(reset)
+                            log.error("ESI error limit hit — sleeping %ss", reset)
+                            await asyncio.sleep(reset + 2)
+                            self._budget_remain = 100
                             continue
 
                         log.error("ESI %s: %s", resp.status, path)
