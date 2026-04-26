@@ -5,6 +5,7 @@ All market endpoints used here are public — no authentication required.
 
 import asyncio
 import logging
+import urllib.parse
 from typing import Any
 
 import aiohttp
@@ -44,9 +45,11 @@ class ESIClient:
         """
         url = f"{config.ESI_BASE_URL}{path}"
         merged = {**_PARAMS, **(params or {})}
+        # Cache key must include query params — different type_ids must not share an ETag
+        cache_key = url + "?" + urllib.parse.urlencode(sorted(merged.items()))
         req_headers: dict[str, str] = {}
-        if url in self._etags:
-            req_headers["If-None-Match"] = self._etags[url]
+        if cache_key in self._etags:
+            req_headers["If-None-Match"] = self._etags[cache_key]
 
         for attempt in range(retries):
             async with self._semaphore:
@@ -66,7 +69,7 @@ class ESIClient:
                         if resp.status == 200:
                             etag = resp.headers.get("ETag")
                             if etag:
-                                self._etags[url] = etag
+                                self._etags[cache_key] = etag
                             data = await resp.json(content_type=None)
                             return data, dict(resp.headers)
 
