@@ -21,11 +21,8 @@ log = logging.getLogger(__name__)
 HISTORY_DAYS_TO_KEEP = 30
 
 
-async def run_once(esi: ESIClient, region_id: int) -> None:
-    log.info("[history] Starting scan for region %s", region_id)
-
-    type_ids = await esi.get_region_types(region_id)
-    log.info("[history] Region %s has %d active type_ids", region_id, len(type_ids))
+async def run_once(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
+    log.info("[history] Starting scan for region %s (%d types)", region_id, len(type_ids))
 
     cutoff = date.today() - timedelta(days=HISTORY_DAYS_TO_KEEP)
 
@@ -72,12 +69,8 @@ async def run_once(esi: ESIClient, region_id: int) -> None:
     log.info("[history] Region %s complete — %d rows stored", region_id, total_rows)
 
 
-async def resolve_unknown_types(esi: ESIClient, region_id: int) -> None:
+async def resolve_unknown_types(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
     """Fetch name + packaged volume for any type not yet in item_types."""
-    type_ids = await esi.get_region_types(region_id)
-
-    # Find which ones we don't know yet
-    known = set()
     rows = await database.pool().fetch("SELECT type_id FROM item_types")
     known = {r["type_id"] for r in rows}
     unknown = [t for t in type_ids if t not in known]

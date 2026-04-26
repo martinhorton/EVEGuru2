@@ -42,8 +42,15 @@ async def history_loop(esi: ESIClient) -> None:
             if _shutdown.is_set():
                 break
             try:
-                await history_agent.resolve_unknown_types(esi, region_id)
-                await history_agent.run_once(esi, region_id)
+                # Fetch type_ids once — avoids a second ESI call that would
+                # hit the ETag cache and return 304 (zero types)
+                type_ids = await esi.get_region_types(region_id)
+                log.info("[history] Region %s has %d active type_ids",
+                         region_id, len(type_ids))
+                if not type_ids:
+                    continue
+                await history_agent.resolve_unknown_types(esi, region_id, type_ids)
+                await history_agent.run_once(esi, region_id, type_ids)
             except Exception:
                 log.exception("[history] Error scanning region %s", region_id)
 
