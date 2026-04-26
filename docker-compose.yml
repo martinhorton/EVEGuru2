@@ -43,14 +43,14 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-eveguru}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-eveguru}
       EVE_CLIENT_ID: ${EVE_CLIENT_ID}
       EVE_CLIENT_SECRET: ${EVE_CLIENT_SECRET}
-      EVE_CALLBACK_URL: ${EVE_CALLBACK_URL:-https://192.168.135.168/auth/callback}
+      EVE_CALLBACK_URL: ${EVE_CALLBACK_URL:-https://192.168.135.168:8443/auth/callback}
 
   web:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:80"
+      - "8443:443"
     environment:
       SERVER_IP: ${SERVER_IP:-192.168.135.168}
     volumes:

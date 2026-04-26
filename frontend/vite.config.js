@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://192.168.135.168',
+        target: 'https://192.168.135.168:8443',
         secure: false,       // allow self-signed cert
         changeOrigin: true
       }
