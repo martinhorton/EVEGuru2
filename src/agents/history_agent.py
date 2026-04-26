@@ -55,11 +55,13 @@ async def run_once(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
                 total_rows += inserted
                 batch.clear()
 
-    # Smaller chunks — reduces burst of 404s that drain the ESI error budget
+    # Process in small chunks with a brief pause between each to stay well inside
+    # ESI's 100-errors-per-60s budget even when many types return 404.
     chunk_size = 20
     for i in range(0, len(type_ids), chunk_size):
         chunk = type_ids[i : i + chunk_size]
         await asyncio.gather(*[fetch_and_queue(tid) for tid in chunk])
+        await asyncio.sleep(0.5)   # ~40 req/s max — gentle on the error budget
         if i % 1000 == 0 and i > 0:
             log.info("[history] Region %s: processed %d/%d types",
                      region_id, i, len(type_ids))

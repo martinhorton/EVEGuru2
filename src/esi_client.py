@@ -27,6 +27,9 @@ class ESIClient:
         # Error budget tracking — ESI allows 100 errors per window
         self._budget_remain: int = 100
         self._budget_reset_at: float = 0.0   # epoch seconds
+        # Lock so only one coroutine handles the budget-low pause at a time;
+        # the rest queue up and proceed immediately once budget is restored.
+        self._budget_lock = asyncio.Lock()
 
     async def __aenter__(self) -> "ESIClient":
         connector = aiohttp.TCPConnector(limit=config.ESI_CONCURRENCY + 5)
@@ -49,18 +52,25 @@ class ESIClient:
             self._budget_reset_at = time.monotonic() + int(reset)
 
     async def _wait_if_budget_low(self) -> None:
-        """Block all requests if the ESI error budget is critically low."""
-        if self._budget_remain < 10:
-            sleep_for = max(0.0, self._budget_reset_at - time.monotonic()) + 2
-            log.warning(
-                "ESI error budget critical (%d remaining) — pausing %.0fs for reset",
-                self._budget_remain, sleep_for,
-            )
-            await asyncio.sleep(sleep_for)
-            self._budget_remain = 100  # will be corrected on next response
-        elif self._budget_remain < 25:
-            # Gentle throttle — add a small delay per request
-            await asyncio.sleep(0.5)
+        """Block all requests if the ESI error budget is critically low.
+
+        Uses a lock so only ONE coroutine does the waiting — all others queue
+        up and proceed immediately once the first one has restored the budget.
+        This prevents the 20-simultaneous-warning storm when running at full
+        concurrency.
+        """
+        async with self._budget_lock:
+            if self._budget_remain < 10:
+                sleep_for = max(0.0, self._budget_reset_at - time.monotonic()) + 2
+                log.warning(
+                    "ESI error budget critical (%d remaining) — pausing %.0fs for reset",
+                    self._budget_remain, sleep_for,
+                )
+                await asyncio.sleep(sleep_for)
+                self._budget_remain = 100  # will be corrected on next response
+            elif self._budget_remain < 25:
+                # Gentle throttle — add a small delay per request
+                await asyncio.sleep(0.2)
 
     async def _get(
         self, path: str, params: dict | None = None, retries: int = 3
@@ -99,7 +109,9 @@ class ESIClient:
                             return data, dict(resp.headers)
 
                         if resp.status == 404:
-                            # Normal for market history — type has no data in this region
+                            # Normal for market history — type has no data in this region.
+                            # Still update budget from headers so we track error spend correctly.
+                            self._update_budget(resp.headers)
                             return None, {}
 
                         if resp.status in (502, 503, 504):
