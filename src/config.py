@@ -29,8 +29,11 @@ ESI_USER_AGENT  = "EVEGuru2/1.0 (market arbitrage scanner; contact martin.horton
 DATABASE_URL        = os.environ["DATABASE_URL"]
 SHORTAGE_RATIO      = float(os.getenv("SHORTAGE_RATIO",      "2.0"))
 MIN_DAILY_VOLUME    = float(os.getenv("MIN_DAILY_VOLUME",     "10"))
-MIN_MARGIN_PCT      = float(os.getenv("MIN_MARGIN_PCT",       "10.0"))
-MAX_MARGIN_PCT      = float(os.getenv("MAX_MARGIN_PCT",      "500.0"))  # scam/stale order filter
+MIN_MARGIN_PCT           = float(os.getenv("MIN_MARGIN_PCT",           "10.0"))
+# If the current sell price at the target hub exceeds this multiple of the
+# 7-day historical average, treat it as a scam/stale order and substitute
+# the historical average as the expected sell price instead.
+PRICE_SANITY_MULTIPLIER  = float(os.getenv("PRICE_SANITY_MULTIPLIER",  "5.0"))
 SHIPPING_ISK_PER_M3 = float(os.getenv("SHIPPING_COST_PER_M3", "1000"))
 SALES_TAX_PCT       = float(os.getenv("SALES_TAX_PCT",        "3.6"))
 BROKER_FEE_PCT      = float(os.getenv("BROKER_FEE_PCT",       "3.0"))

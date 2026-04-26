@@ -12,7 +12,7 @@ import logging
 
 from ..config import (
     Hub, SUPPLY_HUB, TARGET_HUBS,
-    SHORTAGE_RATIO, MIN_DAILY_VOLUME, MIN_MARGIN_PCT, MAX_MARGIN_PCT,
+    SHORTAGE_RATIO, MIN_DAILY_VOLUME, MIN_MARGIN_PCT, PRICE_SANITY_MULTIPLIER,
     SHIPPING_ISK_PER_M3, SELL_OVERHEAD_PCT, DEMAND_WINDOW_DAYS,
 )
 from .. import database
@@ -48,10 +48,6 @@ def _calc_opportunity(
     margin_pct = (profit / total_cost) * 100.0
 
     if margin_pct < MIN_MARGIN_PCT:
-        return None
-
-    # Reject unrealistically high margins — almost always scam/stale orders
-    if margin_pct > MAX_MARGIN_PCT:
         return None
 
     shortage_ratio = avg_daily_volume / max(current_supply, 1)
@@ -113,29 +109,37 @@ async def run_once() -> None:
                     continue
 
             # Shortage confirmed — check Jita
-            jita_price = await database.get_cheapest_sell_at_station(
-                SUPPLY_HUB.station_id, type_id
+            # Use a realistic source price: cheapest tier where cumulative supply
+            # covers at least one day's demand (avoids single-unit lowball orders)
+            jita_price = await database.get_realistic_buy_price_at_station(
+                SUPPLY_HUB.station_id, type_id, min_quantity=avg_vol
             )
             if jita_price is None:
                 continue  # Not available in Jita
 
+            # Get both the current sell price and the 7-day historical average
             target_price = await database.get_cheapest_sell_at_station(
                 hub.station_id, type_id
             )
+            hist_avg = await database.get_avg_market_price(
+                hub.region_id, type_id, days=DEMAND_WINDOW_DAYS
+            )
+
             if target_price is None:
-                # Nothing for sale here at all — use recent average as proxy
-                row = await database.pool().fetchrow(
-                    """
-                    SELECT AVG(average)::float AS avg_price
-                    FROM market_history
-                    WHERE region_id = $1 AND type_id = $2
-                      AND date >= CURRENT_DATE - '7 days'::interval
-                    """,
-                    hub.region_id, type_id,
+                # Nothing for sale — use historical average as proxy
+                target_price = hist_avg
+            elif hist_avg and target_price > hist_avg * PRICE_SANITY_MULTIPLIER:
+                # Current order is far above historical norm — likely a scam/stale
+                # listing.  Substitute the historical average so we calculate what
+                # the trade would realistically yield.
+                log.debug(
+                    "[arbitrage] %s @ %s: sell %.2f is %.1f× hist avg %.2f — using hist avg",
+                    type_id, hub.name, target_price, target_price / hist_avg, hist_avg,
                 )
-                target_price = row["avg_price"] if row and row["avg_price"] else None
-                if not target_price:
-                    continue
+                target_price = hist_avg
+
+            if not target_price:
+                continue
 
             packaged_volume = await database.get_type_volume(type_id) or 1.0
             type_name = await database.get_type_name(type_id) or f"Type {type_id}"

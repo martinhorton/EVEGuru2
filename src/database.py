@@ -247,6 +247,64 @@ async def get_cheapest_sell_at_station(
     return v
 
 
+async def get_realistic_buy_price_at_station(
+    station_id: int, type_id: int, min_quantity: float, max_age_minutes: int = 10
+) -> float | None:
+    """
+    Cheapest price at which at least `min_quantity` cumulative units are available.
+
+    Works through sell orders cheapest-first and returns the price of the tier
+    where cumulative supply first meets `min_quantity`.  This avoids single-unit
+    lowball/scam orders at Jita distorting the source cost.
+
+    Falls back to the absolute cheapest order if total supply < min_quantity
+    (i.e. there simply isn't enough stock — use whatever is there).
+    """
+    row = await pool().fetchrow(
+        """
+        WITH ranked AS (
+            SELECT price,
+                   SUM(volume_remain) OVER (
+                       ORDER BY price
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                   ) AS cum_supply
+            FROM market_orders
+            WHERE location_id  = $1
+              AND type_id      = $2
+              AND is_buy_order = FALSE
+              AND captured_at >= NOW() - ($3 || ' minutes')::interval
+        )
+        SELECT price FROM ranked
+        WHERE cum_supply >= $4
+        ORDER BY price
+        LIMIT 1
+        """,
+        station_id, type_id, str(max_age_minutes), min_quantity,
+    )
+    if row:
+        return float(row["price"])
+    # Total supply is less than min_quantity — fall back to cheapest available
+    return await get_cheapest_sell_at_station(station_id, type_id, max_age_minutes)
+
+
+async def get_avg_market_price(
+    region_id: int, type_id: int, days: int = 7
+) -> float | None:
+    """7-day average transaction price for a type in a region (from market_history)."""
+    row = await pool().fetchrow(
+        """
+        SELECT AVG(average)::float AS avg_price
+        FROM market_history
+        WHERE region_id = $1
+          AND type_id   = $2
+          AND date     >= CURRENT_DATE - ($3 || ' days')::interval
+        """,
+        region_id, type_id, str(days),
+    )
+    v = row["avg_price"] if row else None
+    return float(v) if v else None
+
+
 async def prune_old_orders() -> None:
     await pool().execute("SELECT prune_old_orders()")
     log.info("Pruned stale order data")
