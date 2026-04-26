@@ -344,9 +344,10 @@ async def upsert_opportunity(opp: dict[str, Any]) -> None:
             (type_id, type_name, target_station_id, target_hub_name,
              supply_station_id, avg_daily_volume, current_supply_units,
              shortage_ratio, jita_sell_price, target_sell_price,
-             shipping_cost, total_cost, expected_net_revenue, margin_pct,
+             hist_avg_price, shipping_cost, total_cost,
+             expected_net_revenue, margin_pct,
              detected_at, active)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW(), TRUE)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW(), TRUE)
         ON CONFLICT (type_id, target_station_id)
         WHERE active = TRUE
         DO UPDATE SET
@@ -356,6 +357,7 @@ async def upsert_opportunity(opp: dict[str, Any]) -> None:
             shortage_ratio       = EXCLUDED.shortage_ratio,
             jita_sell_price      = EXCLUDED.jita_sell_price,
             target_sell_price    = EXCLUDED.target_sell_price,
+            hist_avg_price       = EXCLUDED.hist_avg_price,
             shipping_cost        = EXCLUDED.shipping_cost,
             total_cost           = EXCLUDED.total_cost,
             expected_net_revenue = EXCLUDED.expected_net_revenue,
@@ -366,7 +368,7 @@ async def upsert_opportunity(opp: dict[str, Any]) -> None:
         opp["target_hub_name"], opp["supply_station_id"],
         opp["avg_daily_volume"], opp["current_supply_units"],
         opp["shortage_ratio"], opp["jita_sell_price"], opp["target_sell_price"],
-        opp["shipping_cost"], opp["total_cost"],
+        opp.get("hist_avg_price"), opp["shipping_cost"], opp["total_cost"],
         opp["expected_net_revenue"], opp["margin_pct"],
     )
 

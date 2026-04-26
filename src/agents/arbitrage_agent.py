@@ -30,6 +30,7 @@ def _calc_opportunity(
     current_supply: int,
     jita_price: float,
     target_sell_price: float,
+    hist_avg_price: float | None,
     target_hub: Hub,
 ) -> dict | None:
     """
@@ -71,10 +72,12 @@ def _calc_opportunity(
         "shortage_ratio":       shortage_ratio,
         "jita_sell_price":      jita_price,
         "target_sell_price":    target_sell_price,
+        "hist_avg_price":       hist_avg_price,
         "shipping_cost":        shipping_cost,
         "total_cost":           total_cost,
         "expected_net_revenue": net_revenue,
         "margin_pct":           margin_pct,
+        "packaged_volume":      packaged_volume,
     }
 
 
@@ -160,6 +163,7 @@ async def run_once() -> None:
                 current_supply=current_supply,
                 jita_price=jita_price,
                 target_sell_price=target_price,
+                hist_avg_price=hist_avg,
                 target_hub=hub,
             )
 

@@ -105,12 +105,18 @@ async def opportunities(
             o.total_cost::float,
             o.expected_net_revenue::float,
             o.margin_pct::float,
-            ((o.expected_net_revenue - o.total_cost) * o.avg_daily_volume)::float AS estimated_daily_profit,
+            o.hist_avg_price::float,
+            (o.expected_net_revenue - o.total_cost)::float                         AS profit_per_unit,
+            ((o.expected_net_revenue - o.total_cost) * o.avg_daily_volume)::float  AS estimated_daily_profit,
+            CASE WHEN it.packaged_volume > 0
+                 THEN ((o.expected_net_revenue - o.total_cost) / it.packaged_volume)::float
+                 ELSE NULL END                                                      AS profit_per_m3,
             o.detected_at,
             it.group_id,
             it.group_name,
             it.category_id,
-            it.category_name
+            it.category_name,
+            it.packaged_volume::float
         FROM opportunities o
         LEFT JOIN item_types it ON it.type_id = o.type_id
         WHERE o.active = TRUE

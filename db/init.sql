@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     shortage_ratio          NUMERIC(15, 4),
     jita_sell_price         NUMERIC(20, 2),
     target_sell_price       NUMERIC(20, 2),
+    hist_avg_price          NUMERIC(20, 2),
     shipping_cost           NUMERIC(20, 2),
     total_cost              NUMERIC(20, 2),
     expected_net_revenue    NUMERIC(20, 2),

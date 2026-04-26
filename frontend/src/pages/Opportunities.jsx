@@ -75,10 +75,30 @@ const COL_DEFS = [
     type: 'numericColumn',
   },
   {
-    field: 'total_cost', headerName: 'Total Cost', width: 120,
+    field: 'hist_avg_price', headerName: 'Period Avg', width: 120,
+    valueFormatter: p => p.value != null ? isk(p.value) + ' ISK' : '—',
+    type: 'numericColumn',
+    cellStyle: { color: 'var(--text-dim)' },
+    hide: true,
+  },
+  {
+    field: 'shipping_cost', headerName: 'Shipping', width: 110,
     valueFormatter: p => isk(p.value) + ' ISK',
     type: 'numericColumn',
     cellStyle: { color: 'var(--text-dim)' },
+    hide: true,
+  },
+  {
+    field: 'total_cost', headerName: 'Capital Req.', width: 120,
+    valueFormatter: p => isk(p.value) + ' ISK',
+    type: 'numericColumn',
+    cellStyle: { color: 'var(--text-dim)' },
+  },
+  {
+    field: 'profit_per_unit', headerName: 'Profit/Unit', width: 120,
+    valueFormatter: p => p.value != null ? isk(p.value) + ' ISK' : '—',
+    cellStyle: { color: 'var(--green)' },
+    type: 'numericColumn',
   },
   {
     field: 'margin_pct', headerName: 'Margin %', width: 110,
@@ -86,6 +106,20 @@ const COL_DEFS = [
     cellStyle: marginStyle,
     type: 'numericColumn',
     sort: 'desc',
+  },
+  {
+    field: 'packaged_volume', headerName: 'Vol m³', width: 90,
+    valueFormatter: p => p.value != null ? num(p.value, 1) : '—',
+    type: 'numericColumn',
+    cellStyle: { color: 'var(--text-dim)' },
+    hide: true,
+  },
+  {
+    field: 'profit_per_m3', headerName: 'Profit/m³', width: 110,
+    valueFormatter: p => p.value != null ? isk(p.value) + ' ISK' : '—',
+    cellStyle: { color: 'var(--text-dim)' },
+    type: 'numericColumn',
+    hide: true,
   },
   {
     field: 'estimated_daily_profit', headerName: 'Est. Daily ISK', width: 140,
