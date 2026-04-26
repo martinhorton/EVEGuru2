@@ -51,7 +51,11 @@ HISTORY_SCAN_INTERVAL_S = 23 * 3600
 ESI_CONCURRENCY = 20
 
 # ── Daily email reports ────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+# AI provider — defaults to DeepSeek (OpenAI-compatible).
+# Swap AI_BASE_URL + AI_MODEL to use any OpenAI-compatible provider.
+AI_API_KEY  = os.getenv("AI_API_KEY",  "")
+AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.deepseek.com")
+AI_MODEL    = os.getenv("AI_MODEL",    "deepseek-chat")
 
 SMTP_HOST     = os.getenv("SMTP_HOST",     "")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))

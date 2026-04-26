@@ -23,15 +23,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import aiosmtplib
-import anthropic
+from openai import AsyncOpenAI
 
 from .. import config, database
 from ..config import Hub
 
 log = logging.getLogger(__name__)
 
-_AI_MODEL      = "claude-3-5-haiku-20241022"
-_MAX_FOR_AI    = 40   # opportunities sent to Claude per hub
+_MAX_FOR_AI    = 40   # opportunities sent to AI per hub
 
 
 # ── Formatting helpers ─────────────────────────────────────────────────────────
@@ -227,13 +226,16 @@ Guidelines:
 - Keep all text brief and actionable."""
 
     try:
-        client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
-        msg = await client.messages.create(
-            model=_AI_MODEL,
+        client = AsyncOpenAI(
+            api_key=config.AI_API_KEY,
+            base_url=config.AI_BASE_URL,
+        )
+        resp = await client.chat.completions.create(
+            model=config.AI_MODEL,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = msg.content[0].text.strip()
+        raw = resp.choices[0].message.content.strip()
         # Strip accidental markdown code fences
         if raw.startswith("```"):
             parts = raw.split("```")

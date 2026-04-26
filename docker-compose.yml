@@ -43,8 +43,10 @@ services:
       SALES_TAX_PCT: ${SALES_TAX_PCT:-3.6}
       BROKER_FEE_PCT: ${BROKER_FEE_PCT:-3.0}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # AI-powered daily email reports
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # AI-powered daily email reports (DeepSeek by default; swap AI_BASE_URL+AI_MODEL for other providers)
+      AI_API_KEY:    ${AI_API_KEY:-}
+      AI_BASE_URL:   ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_MODEL:      ${AI_MODEL:-deepseek-chat}
       SMTP_HOST:     ${SMTP_HOST:-}
       SMTP_PORT:     ${SMTP_PORT:-587}
       SMTP_USER:     ${SMTP_USER:-}
