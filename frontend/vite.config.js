@@ -5,7 +5,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://localhost:8000'
+      '/api': {
+        target: 'https://192.168.135.168',
+        secure: false,       // allow self-signed cert
+        changeOrigin: true
+      }
     }
   }
 })
