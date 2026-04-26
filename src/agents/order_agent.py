@@ -7,6 +7,7 @@ keeping bandwidth near zero between updates.
 """
 
 import logging
+from datetime import datetime, timezone
 
 from ..config import Hub
 from .. import database
@@ -40,7 +41,7 @@ async def run_once(esi: ESIClient, hub: Hub) -> int:
             "volume_total": o["volume_total"],
             "min_volume":   o.get("min_volume", 1),
             "range":        o.get("range"),
-            "issued":       o["issued"],
+            "issued":       datetime.fromisoformat(o["issued"].replace("Z", "+00:00")),
             "duration":     o["duration"],
         }
         for o in raw_orders
