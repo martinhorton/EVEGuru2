@@ -161,7 +161,7 @@ async def get_avg_daily_volume(
         FROM market_history
         WHERE region_id = $1
           AND type_id   = $2
-          AND date      >= CURRENT_DATE - ($3 || ' days')::interval
+          AND date      >= CURRENT_DATE - ($3 * INTERVAL '1 day')
         """,
         region_id, type_id, days,
     )
