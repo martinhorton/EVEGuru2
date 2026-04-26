@@ -3,14 +3,16 @@ import { Routes, Route, NavLink } from 'react-router-dom'
 import Opportunities from './pages/Opportunities'
 import ItemDetail from './pages/ItemDetail'
 import Dashboard from './pages/Dashboard'
+import Industry from './pages/Industry'
 import { isk, num, relativeTime } from './utils/format'
 
 function Navbar({ stats }) {
   return (
     <nav className="navbar">
       <span className="navbar-brand">EVE GURU 2</span>
-      <NavLink to="/"          className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>Opportunities</NavLink>
-      <NavLink to="/dashboard" className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>Dashboard</NavLink>
+      <NavLink to="/"           className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>Region Trader</NavLink>
+      <NavLink to="/industry"   className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>Industry</NavLink>
+      <NavLink to="/dashboard"  className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>Dashboard</NavLink>
       {stats && (
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 24, fontSize: 12, color: 'var(--text-dim)' }}>
           <span><span style={{ color: 'var(--cyan)' }}>{num(stats.active_count)}</span> opportunities</span>
@@ -39,9 +41,10 @@ export default function App() {
     <div className="layout">
       <Navbar stats={stats} />
       <Routes>
-        <Route path="/"                       element={<Opportunities />} />
-        <Route path="/dashboard"              element={<Dashboard stats={stats} />} />
-        <Route path="/item/:typeId/:stationId" element={<ItemDetail />} />
+        <Route path="/"                        element={<Opportunities />} />
+        <Route path="/industry"                element={<Industry />} />
+        <Route path="/dashboard"               element={<Dashboard stats={stats} />} />
+        <Route path="/item/:typeId/:stationId"  element={<ItemDetail />} />
       </Routes>
     </div>
   )

@@ -34,8 +34,27 @@ CREATE TABLE IF NOT EXISTS sde_meta (
     id          SERIAL PRIMARY KEY,
     imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     type_count  INTEGER,
+    bp_count    INTEGER,
     sde_url     TEXT
 );
+
+-- Manufacturing blueprints (from SDE industryActivityProducts, activityID=1)
+CREATE TABLE IF NOT EXISTS blueprints (
+    blueprint_type_id  INTEGER PRIMARY KEY,
+    product_type_id    INTEGER NOT NULL,
+    product_qty        INTEGER NOT NULL DEFAULT 1,
+    base_time_seconds  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_bp_product ON blueprints (product_type_id);
+
+-- Materials required per blueprint run (activityID=1, base quantities)
+CREATE TABLE IF NOT EXISTS blueprint_materials (
+    blueprint_type_id  INTEGER NOT NULL,
+    material_type_id   INTEGER NOT NULL,
+    quantity           BIGINT  NOT NULL,
+    PRIMARY KEY (blueprint_type_id, material_type_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bpm_bp ON blueprint_materials (blueprint_type_id);
 
 -- Daily OHLCV history per region
 CREATE TABLE IF NOT EXISTS market_history (

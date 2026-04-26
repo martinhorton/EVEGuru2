@@ -250,3 +250,150 @@ a:hover { text-decoration: underline; }
 .empty-state { color: var(--text-dim); text-align: center; padding: 60px; }
 .loading     { color: var(--text-dim); padding: 40px; text-align: center; }
 .error-msg   { color: var(--red); padding: 12px; background: rgba(248,113,113,0.1); border-radius: 6px; }
+
+/* ── Industry page ── */
+.ind-page { overflow-y: auto; }
+
+.ind-search-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.ind-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--gold);
+  white-space: nowrap;
+}
+
+.ind-search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 280px;
+  max-width: 600px;
+}
+.ind-search-input {
+  width: 100%;
+  padding: 9px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.ind-search-input:focus { outline: none; border-color: var(--cyan); }
+.ind-search-spinner { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
+.ind-search-results {
+  position: absolute;
+  z-index: 100;
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 4px;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.ind-search-results li {
+  padding: 8px 14px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ind-search-results li:last-child { border-bottom: none; }
+.ind-search-results li:hover { background: var(--bg-hover); }
+.ind-res-name { color: var(--cyan); font-size: 13px; }
+.ind-res-meta { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+
+.ind-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  color: var(--text-dim);
+  font-size: 15px;
+}
+
+.ind-header-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.ind-bp-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  min-width: 260px;
+  flex: 1;
+}
+.ind-bp-title { font-size: 18px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+.ind-bp-sub   { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
+.ind-bp-meta  { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.ind-bp-meta em  { color: var(--text-primary); font-style: normal; }
+.ind-bp-meta strong { color: var(--gold); }
+
+.ind-summary-cards { display: flex; gap: 12px; flex-wrap: wrap; }
+
+.ind-controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 20px;
+  flex-wrap: wrap;
+}
+.ind-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.ind-controls input[type="number"] {
+  width: 80px;
+  padding: 5px 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.ind-controls input:focus { outline: none; border-color: var(--cyan); }
+
+.ind-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  overflow-x: auto;
+}
+.ind-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.ind-section h3 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-dim); }
+.ind-build-time { font-size: 12px; color: var(--cyan); }
+
+.ind-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ind-table th, .ind-table td { padding: 7px 12px; }
+.ind-table th { color: var(--text-muted); font-weight: 500; text-align: right; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; }
+.ind-table td { border-bottom: 1px solid rgba(42,58,85,0.5); }
+.ind-table th:first-child, .ind-table td:first-child { text-align: left; }
+.ind-table tfoot td { border-bottom: none; border-top: 1px solid var(--border); }
+.ind-table tbody tr:hover td { background: var(--bg-hover); }

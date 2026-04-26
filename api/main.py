@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import List, Optional
 
 import asyncpg
 import os
@@ -198,3 +198,173 @@ async def item_orders(type_id: int):
         LIMIT 200
     """, type_id, list(HUB_STATIONS))
     return [_row(r) for r in rows]
+
+
+# ── Industry endpoints ─────────────────────────────────────────────────────────
+
+# Hub metadata: station_id, name, region_id
+_HUB_META = [
+    {"station_id": 60003760, "name": "Jita",    "short": "Jita",    "region_id": 10000002},
+    {"station_id": 60008494, "name": "Amarr",   "short": "Amarr",   "region_id": 10000043},
+    {"station_id": 60011866, "name": "Dodixie", "short": "Dodixie", "region_id": 10000032},
+    {"station_id": 60004588, "name": "Rens",    "short": "Rens",    "region_id": 10000030},
+    {"station_id": 60005686, "name": "Hek",     "short": "Hek",     "region_id": 10000042},
+]
+
+
+@app.get("/api/industry/search")
+async def industry_search(q: str = Query(..., min_length=2)):
+    """Search blueprints by product name or blueprint name."""
+    rows = await _pool.fetch("""
+        SELECT
+            b.blueprint_type_id,
+            b.product_type_id,
+            b.product_qty,
+            b.base_time_seconds,
+            bp_it.name  AS blueprint_name,
+            prod_it.name AS product_name,
+            prod_it.group_name,
+            prod_it.category_name,
+            prod_it.packaged_volume::float AS product_volume
+        FROM blueprints b
+        JOIN item_types bp_it   ON bp_it.type_id   = b.blueprint_type_id
+        JOIN item_types prod_it ON prod_it.type_id = b.product_type_id
+        WHERE prod_it.name ILIKE '%' || $1 || '%'
+           OR bp_it.name  ILIKE '%' || $1 || '%'
+        ORDER BY prod_it.name
+        LIMIT 60
+    """, q)
+    return [_row(r) for r in rows]
+
+
+@app.get("/api/industry/blueprint/{bp_type_id}")
+async def blueprint_detail(bp_type_id: int):
+    """Full blueprint info: product + all manufacturing materials."""
+    bp = await _pool.fetchrow("""
+        SELECT
+            b.blueprint_type_id,
+            b.product_type_id,
+            b.product_qty,
+            b.base_time_seconds,
+            bp_it.name   AS blueprint_name,
+            prod_it.name AS product_name,
+            prod_it.packaged_volume::float AS product_volume,
+            prod_it.group_name,
+            prod_it.category_name
+        FROM blueprints b
+        JOIN item_types bp_it   ON bp_it.type_id   = b.blueprint_type_id
+        JOIN item_types prod_it ON prod_it.type_id = b.product_type_id
+        WHERE b.blueprint_type_id = $1
+    """, bp_type_id)
+    if not bp:
+        raise HTTPException(404, "Blueprint not found")
+
+    materials = await _pool.fetch("""
+        SELECT
+            bm.material_type_id,
+            bm.quantity AS base_quantity,
+            it.name,
+            COALESCE(it.packaged_volume, 1.0)::float AS packaged_volume,
+            it.group_name,
+            it.category_name
+        FROM blueprint_materials bm
+        JOIN item_types it ON it.type_id = bm.material_type_id
+        WHERE bm.blueprint_type_id = $1
+        ORDER BY it.name
+    """, bp_type_id)
+
+    return {
+        **_row(bp),
+        "materials": [_row(m) for m in materials],
+    }
+
+
+@app.get("/api/industry/prices")
+async def material_prices(type_ids: str = Query(...)):
+    """
+    Current Jita sell prices for a comma-separated list of type_ids.
+    Falls back to 30-day average from market_history if no live order.
+    Returns {type_id: price} map.
+    """
+    try:
+        ids = [int(x) for x in type_ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(400, "Invalid type_ids")
+    if not ids:
+        return {}
+
+    JITA_STATION = 60003760
+    JITA_REGION  = 10000002
+
+    # Live Jita sell orders (last 15 min)
+    order_rows = await _pool.fetch("""
+        SELECT type_id, MIN(price)::float AS price
+        FROM market_orders
+        WHERE type_id     = ANY($1::integer[])
+          AND location_id = $2
+          AND is_buy_order = FALSE
+          AND captured_at >= NOW() - INTERVAL '15 minutes'
+        GROUP BY type_id
+    """, ids, JITA_STATION)
+    prices = {r["type_id"]: r["price"] for r in order_rows}
+
+    # Fall back to 30-day history average for any missing
+    missing = [i for i in ids if i not in prices]
+    if missing:
+        hist_rows = await _pool.fetch("""
+            SELECT type_id, AVG(average)::float AS price
+            FROM market_history
+            WHERE type_id   = ANY($1::integer[])
+              AND region_id = $2
+              AND date      >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY type_id
+        """, missing, JITA_REGION)
+        for r in hist_rows:
+            prices[r["type_id"]] = r["price"]
+
+    return {str(k): v for k, v in prices.items()}
+
+
+@app.get("/api/industry/hub-prices/{type_id}")
+async def hub_sell_prices(type_id: int):
+    """
+    Cheapest current sell price at each hub for a given product type_id.
+    Used to compare production cost vs sell price across hubs.
+    """
+    rows = await _pool.fetch("""
+        SELECT location_id, MIN(price)::float AS sell_price
+        FROM market_orders
+        WHERE type_id      = $1
+          AND location_id  = ANY($2::bigint[])
+          AND is_buy_order = FALSE
+          AND captured_at >= NOW() - INTERVAL '15 minutes'
+        GROUP BY location_id
+    """, type_id, [h["station_id"] for h in _HUB_META])
+
+    price_map = {r["location_id"]: r["sell_price"] for r in rows}
+
+    # Fall back to recent history average if no live orders at a hub
+    missing_stations = [h for h in _HUB_META if h["station_id"] not in price_map]
+    if missing_stations:
+        missing_regions = [h["region_id"] for h in missing_stations]
+        hist_rows = await _pool.fetch("""
+            SELECT region_id, AVG(average)::float AS price
+            FROM market_history
+            WHERE type_id   = $1
+              AND region_id = ANY($2::integer[])
+              AND date      >= CURRENT_DATE - INTERVAL '7 days'
+            GROUP BY region_id
+        """, type_id, missing_regions)
+        region_price = {r["region_id"]: r["price"] for r in hist_rows}
+        for h in missing_stations:
+            if h["region_id"] in region_price:
+                price_map[h["station_id"]] = region_price[h["region_id"]]
+
+    return [
+        {
+            "station_id": h["station_id"],
+            "hub_name":   h["short"],
+            "sell_price": price_map.get(h["station_id"]),
+        }
+        for h in _HUB_META
+    ]
