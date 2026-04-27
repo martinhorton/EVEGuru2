@@ -2,6 +2,13 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    command: >
+      postgres
+        -c max_wal_size=4GB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=64MB
+        -c shared_buffers=512MB
+        -c effective_cache_size=1GB
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-eveguru}
       POSTGRES_USER: ${POSTGRES_USER:-eveguru}

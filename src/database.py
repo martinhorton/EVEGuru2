@@ -195,7 +195,19 @@ async def get_active_types_for_region(
 # market_orders
 # ---------------------------------------------------------------------------
 
+_ORDER_INSERT_SQL = """
+    INSERT INTO market_orders
+        (order_id, region_id, type_id, location_id, is_buy_order,
+         price, volume_remain, volume_total, min_volume, range,
+         issued, duration, captured_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    ON CONFLICT (order_id, captured_at) DO NOTHING
+"""
+_ORDER_BATCH_SIZE = 5_000  # rows per executemany call (~1-2s each, well within timeout)
+
+
 async def upsert_orders_batch(rows: list[dict]) -> int:
+    """Insert market orders in chunks to avoid command_timeout on large regions (e.g. Jita)."""
     if not rows:
         return 0
     now = datetime.now(timezone.utc)
@@ -207,17 +219,9 @@ async def upsert_orders_batch(rows: list[dict]) -> int:
         )
         for r in rows
     ]
-    await pool().executemany(
-        """
-        INSERT INTO market_orders
-            (order_id, region_id, type_id, location_id, is_buy_order,
-             price, volume_remain, volume_total, min_volume, range,
-             issued, duration, captured_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-        ON CONFLICT (order_id, captured_at) DO NOTHING
-        """,
-        records,
-    )
+    for i in range(0, len(records), _ORDER_BATCH_SIZE):
+        chunk = records[i : i + _ORDER_BATCH_SIZE]
+        await pool().executemany(_ORDER_INSERT_SQL, chunk)
     return len(records)
 
 
