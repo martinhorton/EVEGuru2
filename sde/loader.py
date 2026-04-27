@@ -303,6 +303,38 @@ def run_import() -> None:
         if i and i % 40000 == 0:
             log.info("  … %d / %d materials", i, len(mat_records))
 
+    # ── Fix ship packaged volumes ───────────────────────────────────────────────
+    # EVE's SDE invTypes.volume stores the *assembled* (in-space) volume for
+    # ships, which can be 5-40× larger than the *packaged* volume used for
+    # shipping/cargo.  We correct these here using EVE's documented standard
+    # packaged sizes so that shipping cost calculations are accurate.
+    log.info("Applying ship packaged-volume corrections …")
+    pg.execute("""
+        UPDATE item_types SET packaged_volume =
+          CASE
+            WHEN group_name = 'Capsule'                               THEN 1000
+            WHEN group_name IN ('Shuttle','Rookie ship')              THEN 500
+            WHEN group_name IN ('Frigate','Covert Ops','Interceptor',
+                                'Assault Frigate','Electronic Attack Ship',
+                                'Logistics Frigate','Expedition Frigate',
+                                'Destroyer','Interdictor',
+                                'Command Destroyer')                  THEN 2500
+            WHEN group_name = 'Tactical Destroyer'                    THEN 5000
+            WHEN group_name IN ('Cruiser','Heavy Assault Cruiser',
+                                'Recon Ship','Heavy Interdiction Cruiser',
+                                'Logistics','Combat Recon Ship',
+                                'Mining Cruiser','Strategic Cruiser') THEN 10000
+            WHEN group_name IN ('Battlecruiser','Combat Battlecruiser',
+                                'Attack Battlecruiser','Command Ship') THEN 15000
+            WHEN group_name IN ('Battleship','Black Ops','Marauder')  THEN 50000
+            WHEN group_name IN ('Mining Barge','Exhumer')             THEN 3750
+            WHEN group_name IN ('Industrial','Deep Space Transport',
+                                'Blockade Runner')                    THEN 20000
+            WHEN group_name IN ('Freighter','Jump Freighter')         THEN 1000000
+            ELSE packaged_volume
+          END
+        WHERE category_id = 6
+    """)
     pg.execute(
         "INSERT INTO sde_meta (type_count, bp_count, sde_url) VALUES (%s, %s, %s)",
         (len(type_records), len(bp_records), SDE_URL),
