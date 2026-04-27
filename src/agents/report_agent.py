@@ -137,7 +137,8 @@ async def _hub_opportunities(supply_hub: Hub, target_hubs: list[Hub]) -> list[di
         ORDER BY (t.target_price - s.supply_price) / NULLIF(s.supply_price, 0) DESC
         LIMIT 300
     """, supply_hub.station_id, target_station_ids,
-         target_region_ids, config.MIN_DAILY_VOLUME)
+         target_region_ids, config.MIN_DAILY_VOLUME,
+         timeout=120)
 
     opps = []
     for r in rows:
