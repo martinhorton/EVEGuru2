@@ -146,11 +146,11 @@ ON CONFLICT (blueprint_type_id, material_type_id) DO UPDATE SET
 
 # ─── SQLite queries ────────────────────────────────────────────────────────────
 
-_SDE_TYPES_QUERY = """
+_SDE_TYPES_QUERY_TMPL = """
 SELECT
     t.typeID        AS type_id,
     t.typeName      AS name,
-    COALESCE(t.volume, 1.0) AS packaged_volume,
+    COALESCE({vol_expr}, 1.0) AS packaged_volume,
     t.groupID       AS group_id,
     g.groupName     AS group_name,
     g.categoryID    AS category_id,
@@ -161,6 +161,46 @@ JOIN invGroups     g ON t.groupID    = g.groupID
 JOIN invCategories c ON g.categoryID = c.categoryID
 WHERE t.published = 1
 """
+
+
+def _sde_types_query(cur: sqlite3.Cursor) -> str:
+    """
+    Return the correct SELECT query for item_types, using the best available
+    packaged-volume column in the SQLite schema.
+
+    EVE SDE history:
+      - invTypes.volume     = assembled (in-space) volume — WRONG for ships
+      - invTypes.packaged_volume = correct packaged size  (newer Fuzzwork dumps)
+      - invVolumes.volume   = correct packaged size       (older Fuzzwork dumps)
+
+    Ships can have assembled volumes 5-20× larger than packaged, so using the
+    wrong column inflates shipping costs and hides otherwise-profitable trades.
+    """
+    cur.execute("PRAGMA table_info(invTypes)")
+    invtypes_cols = {row[1].lower() for row in cur.fetchall()}
+
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='invVolumes'")
+    has_invvolumes = cur.fetchone() is not None
+
+    if "packaged_volume" in invtypes_cols:
+        log.info("SDE: using invTypes.packaged_volume (correct packaged sizes)")
+        vol_expr = "t.packaged_volume"
+    elif has_invvolumes:
+        log.info("SDE: using invVolumes.volume (correct packaged sizes)")
+        # Add LEFT JOIN to the query
+        return _SDE_TYPES_QUERY_TMPL.replace(
+            "FROM invTypes t",
+            "FROM invTypes t\nLEFT JOIN invVolumes v ON v.typeID = t.typeID",
+        ).format(vol_expr="COALESCE(v.volume, t.volume)")
+    else:
+        log.warning(
+            "SDE: invTypes has no packaged_volume column and invVolumes table not found. "
+            "Ship packaged volumes will be wrong (assembled size used instead). "
+            "Force a fresh SDE download: docker compose run --rm -e SDE_REFRESH_DAYS=0 sde"
+        )
+        vol_expr = "t.volume"
+
+    return _SDE_TYPES_QUERY_TMPL.format(vol_expr=vol_expr)
 
 # Manufacturing activity = 1
 _SDE_BLUEPRINTS_QUERY = """
@@ -197,7 +237,7 @@ def run_import() -> None:
 
     cur = con.cursor()
 
-    cur.execute(_SDE_TYPES_QUERY)
+    cur.execute(_sde_types_query(cur))
     type_rows = cur.fetchall()
     log.info("  %d published types", len(type_rows))
 
