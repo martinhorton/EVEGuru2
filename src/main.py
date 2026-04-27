@@ -66,15 +66,19 @@ async def history_loop(esi: ESIClient) -> None:
 
 
 async def order_loop(esi: ESIClient) -> None:
-    """Scan sell orders for every hub region every ~5 minutes."""
+    """Scan sell orders for every hub region every ~5 minutes.
+
+    All regions are scanned concurrently so that Jita (the slowest region)
+    does not make every other region's data stale by the time the arbitrage
+    agent runs.  Each hub still gets its own ESIClient fetch, but the overall
+    round-trip is dominated by the slowest region rather than the sum of all.
+    """
     while not _shutdown.is_set():
-        for hub in config.HUBS:
-            if _shutdown.is_set():
-                break
-            try:
-                await order_agent.run_once(esi, hub)
-            except Exception:
-                log.exception("[orders] Error scanning %s", hub.name)
+        tasks = [order_agent.run_once(esi, hub) for hub in config.HUBS]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for hub, result in zip(config.HUBS, results):
+            if isinstance(result, Exception):
+                log.exception("[orders] Error scanning %s: %s", hub.name, result)
 
         try:
             await asyncio.wait_for(
@@ -98,7 +102,7 @@ async def arbitrage_loop() -> None:
             log.exception("[arbitrage] Error during analysis pass")
 
         cycle += 1
-        if cycle % 288 == 0:  # roughly once per day (288 × 5min = 24h)
+        if cycle % 12 == 0:  # roughly once per hour (12 × 5min = 60min)
             try:
                 await database.prune_old_orders()
             except Exception:

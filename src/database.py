@@ -226,7 +226,7 @@ async def upsert_orders_batch(rows: list[dict]) -> int:
 
 
 async def get_sell_supply_at_station(
-    station_id: int, type_id: int, max_age_minutes: int = 10
+    station_id: int, type_id: int, max_age_minutes: int = 20
 ) -> int:
     """Total units for sale at a specific station (most recent scan)."""
     row = await pool().fetchrow(
@@ -244,7 +244,7 @@ async def get_sell_supply_at_station(
 
 
 async def get_cheapest_sell_at_station(
-    station_id: int, type_id: int, max_age_minutes: int = 10
+    station_id: int, type_id: int, max_age_minutes: int = 20
 ) -> float | None:
     """Lowest sell price at a specific station."""
     row = await pool().fetchrow(
@@ -263,7 +263,7 @@ async def get_cheapest_sell_at_station(
 
 
 async def get_realistic_buy_price_at_station(
-    station_id: int, type_id: int, min_quantity: float, max_age_minutes: int = 10
+    station_id: int, type_id: int, min_quantity: float, max_age_minutes: int = 20
 ) -> float | None:
     """
     Cheapest price at which at least `min_quantity` cumulative units are available.
@@ -321,8 +321,14 @@ async def get_avg_market_price(
 
 
 async def prune_old_orders() -> None:
-    await pool().execute("SELECT prune_old_orders()")
-    log.info("Pruned stale order data")
+    # Keep only 30 minutes of order snapshots — enough for the 20-minute
+    # freshness window plus one full scan cycle of buffer.
+    # We bypass the init.sql stored procedure (which used 25 hours) and
+    # delete directly so the retention can be changed without a DB migration.
+    result = await pool().execute(
+        "DELETE FROM market_orders WHERE captured_at < NOW() - INTERVAL '30 minutes'"
+    )
+    log.info("Pruned stale order data (%s)", result)
 
 
 # ---------------------------------------------------------------------------
