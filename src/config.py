@@ -31,7 +31,7 @@ DATABASE_URL        = os.environ["DATABASE_URL"]
 # Days of supply = current_supply / avg_daily_demand.
 # Commercial apps typically show everything (no cap); 30 is a sensible default
 # that excludes deeply over-stocked markets while catching price-spread trades.
-MAX_DAYS_SUPPLY     = float(os.getenv("MAX_DAYS_SUPPLY",      "30"))
+MAX_DAYS_SUPPLY     = float(os.getenv("MAX_DAYS_SUPPLY",      "60"))
 MIN_DAILY_VOLUME    = float(os.getenv("MIN_DAILY_VOLUME",     "1.0"))
 MIN_MARGIN_PCT           = float(os.getenv("MIN_MARGIN_PCT",           "10.0"))
 # Absolute ISK profit floor per unit (alternative to margin %).

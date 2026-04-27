@@ -43,8 +43,8 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-eveguru}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-eveguru}
-      MAX_DAYS_SUPPLY: ${MAX_DAYS_SUPPLY:-30}
-      MIN_DAILY_VOLUME: ${MIN_DAILY_VOLUME:-2}
+      MAX_DAYS_SUPPLY: ${MAX_DAYS_SUPPLY:-60}
+      MIN_DAILY_VOLUME: ${MIN_DAILY_VOLUME:-1}
       MIN_MARGIN_PCT:          ${MIN_MARGIN_PCT:-10.0}
       MIN_PROFIT_ISK:          ${MIN_PROFIT_ISK:-500000}
       PRICE_SANITY_MULTIPLIER: ${PRICE_SANITY_MULTIPLIER:-5.0}
