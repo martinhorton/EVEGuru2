@@ -387,6 +387,145 @@ async def upsert_opportunity(opp: dict[str, Any]) -> None:
 insert_opportunity = upsert_opportunity
 
 
+async def get_arbitrage_candidates(
+    hub_region_id: int,
+    hub_station_id: int,
+    supply_station_id: int,
+    min_daily_volume: float = 1.0,
+    max_days_supply: float = 60.0,
+    days: int = 7,
+    max_age_minutes: int = 20,
+) -> list[dict]:
+    """
+    Single bulk query replacing the per-type N+1 loop in the arbitrage agent.
+
+    Returns one row per candidate type containing everything the agent needs
+    to call _calc_opportunity — avg_daily, current_supply, jita_price,
+    live_target_price, hist_avg_price, packaged_volume, type_name.
+
+    The price-sanity check (live vs hist avg) is intentionally left to the
+    caller so it stays in one place with the rest of the business logic.
+    """
+    rows = await pool().fetch(
+        """
+        WITH
+        -- 1. Types with sufficient demand in this hub's region
+        demand AS (
+            SELECT type_id,
+                   SUM(volume)::float / $5 AS avg_daily
+            FROM   market_history
+            WHERE  region_id = $1
+              AND  date >= CURRENT_DATE - ($5 * INTERVAL '1 day')
+            GROUP  BY type_id
+            HAVING SUM(volume)::float / $5 >= $6
+        ),
+        -- 2. Current sell supply at the target hub
+        hub_supply AS (
+            SELECT type_id,
+                   SUM(volume_remain)::bigint AS supply
+            FROM   market_orders
+            WHERE  location_id = $2
+              AND  is_buy_order = FALSE
+              AND  captured_at >= NOW() - ($7 || ' minutes')::interval
+            GROUP  BY type_id
+        ),
+        -- 3. Keep only types below the days-of-supply threshold
+        undersupplied AS (
+            SELECT d.type_id,
+                   d.avg_daily,
+                   COALESCE(s.supply, 0) AS supply
+            FROM   demand d
+            LEFT   JOIN hub_supply s ON s.type_id = d.type_id
+            WHERE  COALESCE(s.supply, 0) = 0
+               OR  COALESCE(s.supply, 0)::float / NULLIF(d.avg_daily, 0) <= $4
+        ),
+        -- 4. Cumulative supply at Jita (cheapest-first) for undersupplied types only
+        jita_cum AS (
+            SELECT mo.type_id,
+                   mo.price,
+                   SUM(mo.volume_remain) OVER (
+                       PARTITION BY mo.type_id
+                       ORDER BY mo.price
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                   ) AS cum_supply
+            FROM   market_orders mo
+            WHERE  mo.location_id = $3
+              AND  mo.is_buy_order = FALSE
+              AND  mo.captured_at >= NOW() - ($7 || ' minutes')::interval
+              AND  mo.type_id IN (SELECT type_id FROM undersupplied)
+        ),
+        -- 5. Realistic Jita price: first tier where cumulative supply >= avg_daily
+        jita_price AS (
+            SELECT DISTINCT ON (jc.type_id)
+                   jc.type_id,
+                   jc.price::float AS jita_price
+            FROM   jita_cum jc
+            JOIN   undersupplied u ON u.type_id = jc.type_id
+            WHERE  jc.cum_supply >= u.avg_daily
+            ORDER  BY jc.type_id, jc.price ASC
+        ),
+        -- 6. Fallback: types where total Jita supply < avg_daily — use cheapest
+        jita_fallback AS (
+            SELECT type_id,
+                   MIN(price)::float AS jita_price
+            FROM   market_orders
+            WHERE  location_id = $3
+              AND  is_buy_order = FALSE
+              AND  captured_at >= NOW() - ($7 || ' minutes')::interval
+              AND  type_id IN (
+                       SELECT u.type_id FROM undersupplied u
+                       WHERE  u.type_id NOT IN (SELECT type_id FROM jita_price)
+                   )
+            GROUP  BY type_id
+        ),
+        jita AS (
+            SELECT * FROM jita_price
+            UNION ALL
+            SELECT * FROM jita_fallback
+        ),
+        -- 7. Cheapest live sell at target hub (returned separately for sanity check)
+        target_sell AS (
+            SELECT type_id,
+                   MIN(price)::float AS live_price
+            FROM   market_orders
+            WHERE  location_id = $2
+              AND  is_buy_order = FALSE
+              AND  captured_at >= NOW() - ($7 || ' minutes')::interval
+              AND  type_id IN (SELECT type_id FROM jita)
+            GROUP  BY type_id
+        ),
+        -- 8. Historical average at target hub (sanity check + fallback)
+        hist AS (
+            SELECT type_id,
+                   AVG(average)::float AS avg_price
+            FROM   market_history
+            WHERE  region_id = $1
+              AND  date >= CURRENT_DATE - ($5 * INTERVAL '1 day')
+              AND  type_id IN (SELECT type_id FROM jita)
+            GROUP  BY type_id
+        )
+        SELECT
+            u.type_id,
+            it.name                                     AS type_name,
+            COALESCE(it.packaged_volume, 1.0)::float    AS packaged_volume,
+            u.avg_daily,
+            u.supply                                    AS current_supply,
+            j.jita_price,
+            ts.live_price                               AS live_target_price,
+            h.avg_price                                 AS hist_avg_price
+        FROM   undersupplied u
+        JOIN   jita          j  ON j.type_id  = u.type_id
+        LEFT   JOIN target_sell ts ON ts.type_id = u.type_id
+        LEFT   JOIN hist        h  ON h.type_id  = u.type_id
+        LEFT   JOIN item_types  it ON it.type_id = u.type_id
+        WHERE  ts.live_price IS NOT NULL OR h.avg_price IS NOT NULL
+        """,
+        hub_region_id, hub_station_id, supply_station_id,
+        max_days_supply, days, min_daily_volume, str(max_age_minutes),
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_recent_opportunities(limit: int = 50) -> list[asyncpg.Record]:
     return await pool().fetch(
         """

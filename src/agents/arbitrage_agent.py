@@ -89,79 +89,54 @@ async def run_once() -> None:
     total_found = 0
 
     for hub in TARGET_HUBS:
-        # Types with real demand in this hub's region over the last 7 days
-        candidate_types = await database.get_active_types_for_region(
-            hub.region_id, days=DEMAND_WINDOW_DAYS, min_volume=MIN_DAILY_VOLUME
+        # Single bulk query replaces the old per-type N+1 loop.
+        # Demand check → supply check → Jita price → target price → item metadata
+        # are all resolved in one round-trip per hub instead of ~7 per type.
+        candidates = await database.get_arbitrage_candidates(
+            hub_region_id=hub.region_id,
+            hub_station_id=hub.station_id,
+            supply_station_id=SUPPLY_HUB.station_id,
+            min_daily_volume=MIN_DAILY_VOLUME,
+            max_days_supply=MAX_DAYS_SUPPLY,
+            days=DEMAND_WINDOW_DAYS,
         )
 
-        if not candidate_types:
-            log.debug("[arbitrage] No candidate types for %s", hub.name)
+        if not candidates:
+            log.debug("[arbitrage] No candidates for %s", hub.name)
             continue
 
-        log.debug("[arbitrage] %s: evaluating %d candidate types", hub.name, len(candidate_types))
+        log.debug("[arbitrage] %s: %d candidates returned", hub.name, len(candidates))
 
         hub_opps = 0
-        for type_id in candidate_types:
-            avg_vol = await database.get_avg_daily_volume(
-                hub.region_id, type_id, days=DEMAND_WINDOW_DAYS
-            )
-            if not avg_vol or avg_vol < MIN_DAILY_VOLUME:
-                continue
+        for row in candidates:
+            live_price = row["live_target_price"]
+            hist_avg   = row["hist_avg_price"]
 
-            current_supply = await database.get_sell_supply_at_station(
-                hub.station_id, type_id
-            )
-
-            # Skip if the hub already has more than MAX_DAYS_SUPPLY days of stock.
-            # days_of_supply = supply / daily_demand.  Items with 0 supply always pass.
-            if current_supply > 0 and avg_vol > 0:
-                days_of_supply = current_supply / avg_vol
-                if days_of_supply > MAX_DAYS_SUPPLY:
-                    continue
-
-            # Shortage confirmed — check Jita
-            # Use a realistic source price: cheapest tier where cumulative supply
-            # covers at least one day's demand (avoids single-unit lowball orders)
-            jita_price = await database.get_realistic_buy_price_at_station(
-                SUPPLY_HUB.station_id, type_id, min_quantity=avg_vol
-            )
-            if jita_price is None:
-                continue  # Not available in Jita
-
-            # Get both the current sell price and the 7-day historical average
-            target_price = await database.get_cheapest_sell_at_station(
-                hub.station_id, type_id
-            )
-            hist_avg = await database.get_avg_market_price(
-                hub.region_id, type_id, days=DEMAND_WINDOW_DAYS
-            )
-
-            if target_price is None:
-                # Nothing for sale — use historical average as proxy
+            # Price sanity check: if live order is far above historical norm,
+            # substitute hist avg to avoid scam/stale listings skewing margin.
+            if live_price is None:
                 target_price = hist_avg
-            elif hist_avg and target_price > hist_avg * PRICE_SANITY_MULTIPLIER:
-                # Current order is far above historical norm — likely a scam/stale
-                # listing.  Substitute the historical average so we calculate what
-                # the trade would realistically yield.
+            elif hist_avg and live_price > hist_avg * PRICE_SANITY_MULTIPLIER:
                 log.debug(
                     "[arbitrage] %s @ %s: sell %.2f is %.1f× hist avg %.2f — using hist avg",
-                    type_id, hub.name, target_price, target_price / hist_avg, hist_avg,
+                    row["type_id"], hub.name, live_price, live_price / hist_avg, hist_avg,
                 )
                 target_price = hist_avg
+            else:
+                target_price = live_price
 
             if not target_price:
                 continue
 
-            packaged_volume = await database.get_type_volume(type_id) or 1.0
-            type_name = await database.get_type_name(type_id) or f"Type {type_id}"
+            type_name = row["type_name"] or f"Type {row['type_id']}"
 
             opp = _calc_opportunity(
-                type_id=type_id,
+                type_id=row["type_id"],
                 type_name=type_name,
-                packaged_volume=packaged_volume,
-                avg_daily_volume=avg_vol,
-                current_supply=current_supply,
-                jita_price=jita_price,
+                packaged_volume=row["packaged_volume"],
+                avg_daily_volume=row["avg_daily"],
+                current_supply=row["current_supply"],
+                jita_price=row["jita_price"],
                 target_sell_price=target_price,
                 hist_avg_price=hist_avg,
                 target_hub=hub,
@@ -173,8 +148,8 @@ async def run_once() -> None:
                 log.info(
                     "[arbitrage] OPPORTUNITY | %s @ %s | avg vol %.0f/day | "
                     "supply %d units | Jita %.2f → %s %.2f | margin %.1f%%",
-                    type_name, hub.name, avg_vol, current_supply,
-                    jita_price, hub.name, target_price, opp["margin_pct"],
+                    type_name, hub.name, row["avg_daily"], row["current_supply"],
+                    row["jita_price"], hub.name, target_price, opp["margin_pct"],
                 )
 
         log.info("[arbitrage] %s: %d opportunities found", hub.name, hub_opps)
