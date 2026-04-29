@@ -504,11 +504,20 @@ async def diagnose_item(
     }
 
     # ── Step 1: item_types ────────────────────────────────────────────────────
+    # Strip apostrophes/quotes for matching (handles names like 'Packrat' Mobile Tractor Unit)
+    clean = name.replace("'", "").replace('"', "").strip()
     type_row = await _pool.fetchrow(
         """SELECT type_id, name, COALESCE(packaged_volume, 1.0)::float AS packaged_volume,
                   group_name, category_name
-           FROM item_types WHERE name ILIKE $1 LIMIT 1""",
-        f"%{name}%",
+           FROM item_types
+           WHERE REPLACE(name, '''', '') ILIKE $1
+           ORDER BY
+               -- Prefer exact match, then shortest name (avoids Blueprint/SKIN matches)
+               CASE WHEN LOWER(REPLACE(name, '''', '')) = LOWER($2) THEN 0 ELSE 1 END,
+               length(name) ASC
+           LIMIT 1""",
+        f"%{clean}%",
+        clean,
     )
     if not type_row:
         result["verdict"] = "MISSING: Item not found in item_types table (not in SDE/ESI cache)"
