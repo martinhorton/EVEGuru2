@@ -527,7 +527,7 @@ async def get_arbitrage_candidates(
         LEFT   JOIN item_types  it ON it.type_id = u.type_id
         WHERE  ts.live_price IS NOT NULL OR h.avg_price IS NOT NULL
         """,
-        hub_region_id, hub_station_id, supply_station_id,
+        hub_region_id, hub_station_id, supply_region_id,
         max_days_supply, days, min_daily_volume, str(max_age_minutes),
     )
     return [dict(r) for r in rows]
