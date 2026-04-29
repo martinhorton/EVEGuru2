@@ -424,16 +424,16 @@ _HUB_LOOKUP = {
     "rens":    {"station_id": 60004588, "region_id": 10000030, "name": "Rens"},
     "hek":     {"station_id": 60005686, "region_id": 10000042, "name": "Hek"},
 }
-_DEMAND_DAYS    = 7
-_MAX_AGE_MIN    = 20
-_MIN_DAILY_VOL  = float(os.getenv("MIN_DAILY_VOLUME",    "1.0"))
-_MAX_DAYS_SUPPLY = float(os.getenv("MAX_DAYS_SUPPLY",   "60.0"))
-_MIN_MARGIN_PCT = float(os.getenv("MIN_MARGIN_PCT",     "10.0"))
-_MIN_PROFIT_ISK = float(os.getenv("MIN_PROFIT_ISK",    "500000"))
+_DEMAND_DAYS     = 7
+_MAX_AGE_MIN     = 20
+_MIN_DAILY_VOL   = float(os.getenv("MIN_DAILY_VOLUME",    "1.0"))
+_MAX_DAYS_SUPPLY = float(os.getenv("MAX_DAYS_SUPPLY",    "60.0"))
+_MIN_MARGIN_PCT  = float(os.getenv("MIN_MARGIN_PCT",     "10.0"))
+_MIN_PROFIT_ISK  = float(os.getenv("MIN_PROFIT_ISK",   "500000"))
 _SHIPPING_PER_M3 = float(os.getenv("SHIPPING_COST_PER_M3", "1000"))
-_SANITY_MULT    = PRICE_SANITY_MULTIPLIER
-_OVERHEAD       = SELL_OVERHEAD_PCT
-JITA_STATION    = 60003760
+_SANITY_MULT     = PRICE_SANITY_MULTIPLIER
+_OVERHEAD        = SELL_OVERHEAD_PCT
+JITA_REGION      = 10000002  # The Forge — includes Perimeter citadels
 
 
 @app.get(
@@ -578,7 +578,8 @@ async def diagnose_item(
         )
         return result
 
-    # ── Step 4: Jita price ────────────────────────────────────────────────────
+    # ── Step 4: Supply price (whole Jita region, not just NPC station) ───────
+    # Many T2/faction items are only listed at Perimeter citadels, not 60003760.
     jita_cum = await _pool.fetchrow(
         """
         WITH ranked AS (
@@ -588,36 +589,37 @@ async def diagnose_item(
                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                    ) AS cum_supply
             FROM market_orders
-            WHERE location_id = $1 AND type_id = $2
+            WHERE region_id = $1 AND type_id = $2
               AND is_buy_order = FALSE
               AND captured_at >= NOW() - ($3 || ' minutes')::interval
         )
         SELECT price FROM ranked WHERE cum_supply >= $4 ORDER BY price LIMIT 1
         """,
-        JITA_STATION, type_id, age, avg_daily,
+        JITA_REGION, type_id, age, avg_daily,
     )
     jita_meta = await _pool.fetchrow(
         """
         SELECT MIN(price)::float AS cheapest, SUM(volume_remain) AS total_supply
         FROM market_orders
-        WHERE location_id = $1 AND type_id = $2
+        WHERE region_id = $1 AND type_id = $2
           AND is_buy_order = FALSE
           AND captured_at >= NOW() - ($3 || ' minutes')::interval
         """,
-        JITA_STATION, type_id, age,
+        JITA_REGION, type_id, age,
     )
     jita_price = (
         float(jita_cum["price"]) if jita_cum
         else (float(jita_meta["cheapest"]) if jita_meta and jita_meta["cheapest"] else None)
     )
-    result["steps"]["3_jita_price"] = {
+    result["steps"]["3_supply_price"] = {
         "realistic_price": jita_price,
         "cheapest_available": float(jita_meta["cheapest"]) if jita_meta and jita_meta["cheapest"] else None,
-        "total_jita_supply": int(jita_meta["total_supply"]) if jita_meta and jita_meta["total_supply"] else 0,
+        "total_supply_region": int(jita_meta["total_supply"]) if jita_meta and jita_meta["total_supply"] else 0,
+        "note": "Searches whole Jita region (incl. Perimeter citadels), not just NPC station",
         "passes": jita_price is not None,
     }
     if jita_price is None:
-        result["verdict"] = "FILTERED at step 3 — no Jita sell orders in the last 20 minutes"
+        result["verdict"] = "FILTERED at step 3 — no supply orders in Jita region in the last 20 minutes"
         return result
 
     # ── Step 5: target price + sanity check ───────────────────────────────────

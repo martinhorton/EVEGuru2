@@ -390,7 +390,7 @@ insert_opportunity = upsert_opportunity
 async def get_arbitrage_candidates(
     hub_region_id: int,
     hub_station_id: int,
-    supply_station_id: int,
+    supply_region_id: int,
     min_daily_volume: float = 1.0,
     max_days_supply: float = 60.0,
     days: int = 7,
@@ -398,6 +398,10 @@ async def get_arbitrage_candidates(
 ) -> list[dict]:
     """
     Single bulk query replacing the per-type N+1 loop in the arbitrage agent.
+
+    Uses supply_region_id (e.g. The Forge = 10000002) rather than a single
+    station ID so that items listed at Perimeter citadels and other non-NPC
+    locations in the supply region are included in the source price.
 
     Returns one row per candidate type containing everything the agent needs
     to call _calc_opportunity — avg_daily, current_supply, jita_price,
@@ -419,7 +423,7 @@ async def get_arbitrage_candidates(
             GROUP  BY type_id
             HAVING SUM(volume)::float / $5 >= $6
         ),
-        -- 2. Current sell supply at the target hub
+        -- 2. Current sell supply at the target hub station
         hub_supply AS (
             SELECT type_id,
                    SUM(volume_remain)::bigint AS supply
@@ -439,8 +443,11 @@ async def get_arbitrage_candidates(
             WHERE  COALESCE(s.supply, 0) = 0
                OR  COALESCE(s.supply, 0)::float / NULLIF(d.avg_daily, 0) <= $4
         ),
-        -- 4. Cumulative supply at Jita (cheapest-first) for undersupplied types only
-        jita_cum AS (
+        -- 4. Cumulative supply across the whole supply REGION (cheapest-first).
+        --    Using region_id rather than a single station_id means citadel orders
+        --    in Perimeter etc. are included — many T2/faction items are only
+        --    listed there, not at the Jita NPC station.
+        supply_cum AS (
             SELECT mo.type_id,
                    mo.price,
                    SUM(mo.volume_remain) OVER (
@@ -449,27 +456,27 @@ async def get_arbitrage_candidates(
                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                    ) AS cum_supply
             FROM   market_orders mo
-            WHERE  mo.location_id = $3
+            WHERE  mo.region_id = $3
               AND  mo.is_buy_order = FALSE
               AND  mo.captured_at >= NOW() - ($7 || ' minutes')::interval
               AND  mo.type_id IN (SELECT type_id FROM undersupplied)
         ),
-        -- 5. Realistic Jita price: first tier where cumulative supply >= avg_daily
+        -- 5. Realistic supply price: first tier where cumulative supply >= avg_daily
         jita_price AS (
             SELECT DISTINCT ON (jc.type_id)
                    jc.type_id,
                    jc.price::float AS jita_price
-            FROM   jita_cum jc
+            FROM   supply_cum jc
             JOIN   undersupplied u ON u.type_id = jc.type_id
             WHERE  jc.cum_supply >= u.avg_daily
             ORDER  BY jc.type_id, jc.price ASC
         ),
-        -- 6. Fallback: types where total Jita supply < avg_daily — use cheapest
+        -- 6. Fallback: total region supply < avg_daily — use cheapest available
         jita_fallback AS (
             SELECT type_id,
                    MIN(price)::float AS jita_price
             FROM   market_orders
-            WHERE  location_id = $3
+            WHERE  region_id = $3
               AND  is_buy_order = FALSE
               AND  captured_at >= NOW() - ($7 || ' minutes')::interval
               AND  type_id IN (

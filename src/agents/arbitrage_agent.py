@@ -95,7 +95,7 @@ async def run_once() -> None:
         candidates = await database.get_arbitrage_candidates(
             hub_region_id=hub.region_id,
             hub_station_id=hub.station_id,
-            supply_station_id=SUPPLY_HUB.station_id,
+            supply_region_id=SUPPLY_HUB.region_id,  # whole region, not just NPC station
             min_daily_volume=MIN_DAILY_VOLUME,
             max_days_supply=MAX_DAYS_SUPPLY,
             days=DEMAND_WINDOW_DAYS,
