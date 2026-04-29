@@ -46,7 +46,12 @@ async def lifespan(app: FastAPI):
     await _pool.close()
 
 
-app = FastAPI(title="EVEGuru2 API", lifespan=lifespan)
+app = FastAPI(
+    title="EVEGuru2 API",
+    description="Market arbitrage scanner for EVE Online. All endpoints are read-only.",
+    version="2.0",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -408,3 +413,320 @@ async def hub_sell_prices(type_id: int):
         })
 
     return result
+
+
+# ── Verification / diagnostic endpoints ───────────────────────────────────────
+
+_HUB_LOOKUP = {
+    "jita":    {"station_id": 60003760, "region_id": 10000002, "name": "Jita"},
+    "amarr":   {"station_id": 60008494, "region_id": 10000043, "name": "Amarr"},
+    "dodixie": {"station_id": 60011866, "region_id": 10000032, "name": "Dodixie"},
+    "rens":    {"station_id": 60004588, "region_id": 10000030, "name": "Rens"},
+    "hek":     {"station_id": 60005686, "region_id": 10000042, "name": "Hek"},
+}
+_DEMAND_DAYS    = 7
+_MAX_AGE_MIN    = 20
+_MIN_DAILY_VOL  = float(os.getenv("MIN_DAILY_VOLUME",    "1.0"))
+_MAX_DAYS_SUPPLY = float(os.getenv("MAX_DAYS_SUPPLY",   "60.0"))
+_MIN_MARGIN_PCT = float(os.getenv("MIN_MARGIN_PCT",     "10.0"))
+_MIN_PROFIT_ISK = float(os.getenv("MIN_PROFIT_ISK",    "500000"))
+_SHIPPING_PER_M3 = float(os.getenv("SHIPPING_COST_PER_M3", "1000"))
+_SANITY_MULT    = PRICE_SANITY_MULTIPLIER
+_OVERHEAD       = SELL_OVERHEAD_PCT
+JITA_STATION    = 60003760
+
+
+@app.get(
+    "/api/opportunities/search",
+    summary="Search opportunities by item name",
+    tags=["Verification"],
+)
+async def search_opportunities(
+    q:   str           = Query(..., min_length=2, description="Partial item name"),
+    hub: Optional[str] = Query(None, description="Hub name filter (e.g. 'Rens')"),
+):
+    """Return all active opportunities whose item name matches *q* (case-insensitive)."""
+    rows = await _pool.fetch(
+        """
+        SELECT
+            o.type_id,
+            o.type_name,
+            o.target_hub_name,
+            o.margin_pct::float,
+            o.jita_sell_price::float,
+            o.target_sell_price::float,
+            o.avg_daily_volume::float,
+            o.current_supply_units,
+            o.shortage_ratio::float,
+            (o.expected_net_revenue - o.total_cost)::float AS profit_per_unit,
+            o.shipping_cost::float,
+            o.total_cost::float,
+            o.detected_at,
+            o.active
+        FROM opportunities o
+        WHERE o.active = TRUE
+          AND o.type_name ILIKE '%' || $1 || '%'
+          AND ($2::text IS NULL OR o.target_hub_name ILIKE '%' || $2 || '%')
+          AND o.detected_at >= NOW() - INTERVAL '2 hours'
+        ORDER BY o.margin_pct DESC
+        LIMIT 200
+        """,
+        q, hub,
+    )
+    return [_row(r) for r in rows]
+
+
+@app.get(
+    "/api/diagnostics/item",
+    summary="Full pipeline trace for a named item at a hub",
+    tags=["Verification"],
+)
+async def diagnose_item(
+    name: str = Query(..., min_length=2, description="Exact or partial item name"),
+    hub:  str = Query("Rens", description="Hub name (Jita/Amarr/Dodixie/Rens/Hek)"),
+):
+    """
+    Traces every filter stage of the arbitrage pipeline for the named item
+    and explains exactly why it is (or is not) in the opportunities list.
+
+    Useful for automated verification against a reference dataset.
+    """
+    hub_info = next(
+        (v for k, v in _HUB_LOOKUP.items() if hub.lower() in k),
+        _HUB_LOOKUP["rens"],
+    )
+    age = str(_MAX_AGE_MIN)
+
+    result: dict = {
+        "query":  {"name": name, "hub": hub_info["name"]},
+        "steps":  {},
+        "verdict": None,
+    }
+
+    # ── Step 1: item_types ────────────────────────────────────────────────────
+    type_row = await _pool.fetchrow(
+        """SELECT type_id, name, COALESCE(packaged_volume, 1.0)::float AS packaged_volume,
+                  group_name, category_name
+           FROM item_types WHERE name ILIKE $1 LIMIT 1""",
+        f"%{name}%",
+    )
+    if not type_row:
+        result["verdict"] = "MISSING: Item not found in item_types table (not in SDE/ESI cache)"
+        return result
+
+    type_id  = type_row["type_id"]
+    pkg_vol  = type_row["packaged_volume"]
+    result["item"] = _row(type_row)
+
+    # ── Step 2: demand (market_history) ──────────────────────────────────────
+    demand = await _pool.fetchrow(
+        """
+        SELECT COALESCE(SUM(volume), 0)::float / $3 AS avg_daily,
+               COUNT(*) AS trading_days
+        FROM   market_history
+        WHERE  type_id = $1 AND region_id = $2
+          AND  date >= CURRENT_DATE - ($3 * INTERVAL '1 day')
+        """,
+        type_id, hub_info["region_id"], _DEMAND_DAYS,
+    )
+    avg_daily = demand["avg_daily"] if demand else 0.0
+    result["steps"]["1_demand"] = {
+        "avg_daily_volume": round(avg_daily, 3),
+        "trading_days_in_window": demand["trading_days"] if demand else 0,
+        "min_required": _MIN_DAILY_VOL,
+        "passes": avg_daily >= _MIN_DAILY_VOL,
+    }
+    if avg_daily < _MIN_DAILY_VOL:
+        result["verdict"] = (
+            f"FILTERED at step 1 — avg daily volume ({avg_daily:.3f}) "
+            f"< minimum ({_MIN_DAILY_VOL})"
+        )
+        return result
+
+    # ── Step 3: supply at hub ─────────────────────────────────────────────────
+    supply_row = await _pool.fetchrow(
+        """
+        SELECT COALESCE(SUM(volume_remain), 0)::bigint AS supply
+        FROM   market_orders
+        WHERE  location_id = $1 AND type_id = $2
+          AND  is_buy_order = FALSE
+          AND  captured_at >= NOW() - ($3 || ' minutes')::interval
+        """,
+        hub_info["station_id"], type_id, age,
+    )
+    supply = int(supply_row["supply"]) if supply_row else 0
+    dos    = supply / avg_daily if avg_daily > 0 else 0.0
+    result["steps"]["2_supply"] = {
+        "current_supply_units": supply,
+        "days_of_supply": round(dos, 2),
+        "max_days_allowed": _MAX_DAYS_SUPPLY,
+        "passes": dos <= _MAX_DAYS_SUPPLY,
+    }
+    if dos > _MAX_DAYS_SUPPLY:
+        result["verdict"] = (
+            f"FILTERED at step 2 — days of supply ({dos:.1f}d) "
+            f"> maximum ({_MAX_DAYS_SUPPLY}d)"
+        )
+        return result
+
+    # ── Step 4: Jita price ────────────────────────────────────────────────────
+    jita_cum = await _pool.fetchrow(
+        """
+        WITH ranked AS (
+            SELECT price,
+                   SUM(volume_remain) OVER (
+                       ORDER BY price
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                   ) AS cum_supply
+            FROM market_orders
+            WHERE location_id = $1 AND type_id = $2
+              AND is_buy_order = FALSE
+              AND captured_at >= NOW() - ($3 || ' minutes')::interval
+        )
+        SELECT price FROM ranked WHERE cum_supply >= $4 ORDER BY price LIMIT 1
+        """,
+        JITA_STATION, type_id, age, avg_daily,
+    )
+    jita_meta = await _pool.fetchrow(
+        """
+        SELECT MIN(price)::float AS cheapest, SUM(volume_remain) AS total_supply
+        FROM market_orders
+        WHERE location_id = $1 AND type_id = $2
+          AND is_buy_order = FALSE
+          AND captured_at >= NOW() - ($3 || ' minutes')::interval
+        """,
+        JITA_STATION, type_id, age,
+    )
+    jita_price = (
+        float(jita_cum["price"]) if jita_cum
+        else (float(jita_meta["cheapest"]) if jita_meta and jita_meta["cheapest"] else None)
+    )
+    result["steps"]["3_jita_price"] = {
+        "realistic_price": jita_price,
+        "cheapest_available": float(jita_meta["cheapest"]) if jita_meta and jita_meta["cheapest"] else None,
+        "total_jita_supply": int(jita_meta["total_supply"]) if jita_meta and jita_meta["total_supply"] else 0,
+        "passes": jita_price is not None,
+    }
+    if jita_price is None:
+        result["verdict"] = "FILTERED at step 3 — no Jita sell orders in the last 20 minutes"
+        return result
+
+    # ── Step 5: target price + sanity check ───────────────────────────────────
+    live_row = await _pool.fetchrow(
+        """
+        SELECT MIN(price)::float AS price FROM market_orders
+        WHERE location_id = $1 AND type_id = $2
+          AND is_buy_order = FALSE
+          AND captured_at >= NOW() - ($3 || ' minutes')::interval
+        """,
+        hub_info["station_id"], type_id, age,
+    )
+    hist_row = await _pool.fetchrow(
+        """
+        SELECT AVG(average)::float AS price FROM market_history
+        WHERE region_id = $1 AND type_id = $2
+          AND date >= CURRENT_DATE - ($3 * INTERVAL '1 day')
+        """,
+        hub_info["region_id"], type_id, _DEMAND_DAYS,
+    )
+    live_price = float(live_row["price"]) if live_row and live_row["price"] else None
+    hist_price = float(hist_row["price"]) if hist_row and hist_row["price"] else None
+
+    if live_price is None:
+        effective = hist_price
+        price_note = "No live orders at hub — using 7-day historical average"
+    elif hist_price and live_price > hist_price * _SANITY_MULT:
+        effective = hist_price
+        price_note = (
+            f"Sanity check triggered: live {live_price:,.0f} ISK is "
+            f"{live_price/hist_price:.1f}× the 7-day avg — using hist avg instead"
+        )
+    else:
+        effective = live_price
+        price_note = "Using live cheapest sell order"
+
+    result["steps"]["4_target_price"] = {
+        "live_price": live_price,
+        "hist_avg_price": hist_price,
+        "effective_price": effective,
+        "note": price_note,
+        "passes": effective is not None,
+    }
+    if not effective:
+        result["verdict"] = "FILTERED at step 4 — no live orders and no price history at hub"
+        return result
+
+    # ── Step 6: margin calculation ────────────────────────────────────────────
+    shipping  = pkg_vol * _SHIPPING_PER_M3
+    total_cost = jita_price + shipping
+    net_rev    = effective * (1.0 - _OVERHEAD)
+    profit     = net_rev - total_cost
+    margin_pct = (profit / total_cost * 100.0) if total_cost > 0 else 0.0
+
+    result["steps"]["5_margin"] = {
+        "jita_price":           round(jita_price, 2),
+        "shipping_cost":        round(shipping, 2),
+        "packaged_volume_m3":   pkg_vol,
+        "total_cost":           round(total_cost, 2),
+        "effective_sell_price": round(effective, 2),
+        "sell_overhead_pct":    round(_OVERHEAD * 100, 2),
+        "net_revenue":          round(net_rev, 2),
+        "profit_per_unit":      round(profit, 2),
+        "margin_pct":           round(margin_pct, 2),
+        "min_margin_required":  _MIN_MARGIN_PCT,
+        "min_profit_required":  _MIN_PROFIT_ISK,
+        "passes": margin_pct >= _MIN_MARGIN_PCT or profit >= _MIN_PROFIT_ISK,
+    }
+
+    # ── Step 7: opportunities table ───────────────────────────────────────────
+    opp = await _pool.fetchrow(
+        """
+        SELECT id, margin_pct::float, detected_at, active
+        FROM opportunities
+        WHERE type_id = $1 AND target_station_id = $2 AND active = TRUE
+        """,
+        type_id, hub_info["station_id"],
+    )
+    result["in_opportunities_table"] = _row(opp) if opp else None
+
+    if margin_pct < _MIN_MARGIN_PCT and profit < _MIN_PROFIT_ISK:
+        result["verdict"] = (
+            f"FILTERED at step 5 — margin {margin_pct:.1f}% < {_MIN_MARGIN_PCT}% "
+            f"AND profit {profit:,.0f} ISK < {_MIN_PROFIT_ISK:,.0f} ISK"
+        )
+    elif opp:
+        result["verdict"] = (
+            f"IN LIST ✓ — margin {opp['margin_pct']:.1f}%, "
+            f"detected {opp['detected_at'].strftime('%H:%M:%S UTC') if opp['detected_at'] else '?'}"
+        )
+    else:
+        result["verdict"] = (
+            f"PASSES ALL FILTERS but not yet in table — "
+            f"expected margin {margin_pct:.1f}%. "
+            f"Wait for the next arbitrage pass (~5 min) or check agent logs."
+        )
+
+    return result
+
+
+@app.get(
+    "/api/diagnostics/batch",
+    summary="Check multiple items at once",
+    tags=["Verification"],
+)
+async def diagnose_batch(
+    names: str = Query(..., description="Comma-separated item names"),
+    hub:   str = Query("Rens"),
+):
+    """
+    Run pipeline diagnostics for multiple items in one call.
+    Returns a summary dict keyed by item name.
+    """
+    name_list = [n.strip() for n in names.split(",") if n.strip()]
+    if len(name_list) > 50:
+        raise HTTPException(400, "Maximum 50 items per batch request")
+
+    results = {}
+    for name in name_list:
+        results[name] = await diagnose_item(name=name, hub=hub)
+    return results
