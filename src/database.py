@@ -226,7 +226,7 @@ async def upsert_orders_batch(rows: list[dict]) -> int:
 
 
 async def get_sell_supply_at_station(
-    station_id: int, type_id: int, max_age_minutes: int = 20
+    station_id: int, type_id: int, max_age_minutes: int = 65
 ) -> int:
     """Total units for sale at a specific station (most recent scan)."""
     row = await pool().fetchrow(
@@ -244,7 +244,7 @@ async def get_sell_supply_at_station(
 
 
 async def get_cheapest_sell_at_station(
-    station_id: int, type_id: int, max_age_minutes: int = 20
+    station_id: int, type_id: int, max_age_minutes: int = 65
 ) -> float | None:
     """Lowest sell price at a specific station."""
     row = await pool().fetchrow(
@@ -263,7 +263,7 @@ async def get_cheapest_sell_at_station(
 
 
 async def get_realistic_buy_price_at_station(
-    station_id: int, type_id: int, min_quantity: float, max_age_minutes: int = 20
+    station_id: int, type_id: int, min_quantity: float, max_age_minutes: int = 65
 ) -> float | None:
     """
     Cheapest price at which at least `min_quantity` cumulative units are available.
@@ -394,7 +394,7 @@ async def get_arbitrage_candidates(
     min_daily_volume: float = 1.0,
     max_days_supply: float = 60.0,
     days: int = 7,
-    max_age_minutes: int = 20,
+    max_age_minutes: int = 65,
 ) -> list[dict]:
     """
     Single bulk query replacing the per-type N+1 loop in the arbitrage agent.

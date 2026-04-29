@@ -425,7 +425,7 @@ _HUB_LOOKUP = {
     "hek":     {"station_id": 60005686, "region_id": 10000042, "name": "Hek"},
 }
 _DEMAND_DAYS     = 7
-_MAX_AGE_MIN     = 20
+_MAX_AGE_MIN     = 65  # ESI 304s mean captured_at isn't refreshed; 65min covers 12 scan cycles
 _MIN_DAILY_VOL   = float(os.getenv("MIN_DAILY_VOLUME",    "1.0"))
 _MAX_DAYS_SUPPLY = float(os.getenv("MAX_DAYS_SUPPLY",    "60.0"))
 _MIN_MARGIN_PCT  = float(os.getenv("MIN_MARGIN_PCT",     "10.0"))
