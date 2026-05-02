@@ -90,6 +90,9 @@ class ESIClient:
         await self._wait_if_budget_low()
 
         for attempt in range(retries):
+            backoff_secs: float = 0.0
+            rate_limited = False
+
             async with self._semaphore:
                 try:
                     assert self._session is not None
@@ -110,35 +113,43 @@ class ESIClient:
 
                         if resp.status == 404:
                             # Normal for market history — type has no data in this region.
-                            # Still update budget from headers so we track error spend correctly.
                             self._update_budget(resp.headers)
                             return None, {}
 
                         if resp.status in (502, 503, 504):
-                            wait = 2 ** attempt
-                            log.warning("ESI %s for %s, retry in %ss", resp.status, path, wait)
-                            await asyncio.sleep(wait)
-                            continue
+                            backoff_secs = float(2 ** attempt)
+                            log.warning("ESI %s for %s, retry in %.0fs", resp.status, path, backoff_secs)
 
-                        if resp.status in (420, 429):
+                        elif resp.status in (420, 429):
                             # 420 = ESI error-limit hit; 429 = Too Many Requests.
-                            # Both require a pause before retrying.
+                            # Signal all coroutines to pause via the budget mechanism so
+                            # they back off through _wait_if_budget_low rather than each
+                            # sleeping independently while holding the semaphore.
                             reset = int(resp.headers.get("X-Esi-Error-Limit-Reset", 60))
+                            self._budget_remain = 0
+                            self._budget_reset_at = time.monotonic() + reset
+                            backoff_secs = float(reset + 2)
+                            rate_limited = True
                             log.warning(
-                                "ESI %s rate-limit on %s — sleeping %ss",
-                                resp.status, path, reset,
+                                "ESI %s rate-limit on %s — pausing %.0fs (semaphore released)",
+                                resp.status, path, backoff_secs,
                             )
-                            await asyncio.sleep(reset + 2)
-                            self._budget_remain = 100
-                            continue
 
-                        log.error("ESI %s: %s", resp.status, path)
-                        return None, {}
+                        else:
+                            log.error("ESI %s: %s", resp.status, path)
+                            return None, {}
 
                 except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     log.warning("ESI request failed (%s): %s", path, exc)
                     if attempt < retries - 1:
-                        await asyncio.sleep(2 ** attempt)
+                        backoff_secs = float(2 ** attempt)
+
+            # ── Semaphore released ─────────────────���──────────────────────────
+            # All sleeps happen here so the slot is free during the wait.
+            if backoff_secs:
+                await asyncio.sleep(backoff_secs)
+            if rate_limited:
+                self._budget_remain = 100  # conservative reset; real value from next response
 
         return None, {}
 
