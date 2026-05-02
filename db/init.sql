@@ -72,29 +72,32 @@ CREATE TABLE IF NOT EXISTS market_history (
 CREATE INDEX IF NOT EXISTS idx_history_region_type ON market_history (region_id, type_id);
 CREATE INDEX IF NOT EXISTS idx_history_date ON market_history (date);
 
--- Live order snapshots (kept for 24h then pruned)
+-- Live order snapshots — one row per order_id, refreshed on every scan.
+-- Using order_id as the sole PK keeps the table at ~620K rows regardless of
+-- how many scan cycles have run (vs the old partitioned design which stored
+-- one row per order per scan and grew to 8M+ rows at steady state).
 CREATE TABLE IF NOT EXISTS market_orders (
-    order_id        BIGINT       NOT NULL,
-    region_id       INTEGER      NOT NULL,
-    type_id         INTEGER      NOT NULL,
-    location_id     BIGINT       NOT NULL,
-    is_buy_order    BOOLEAN      NOT NULL,
-    price           NUMERIC(20, 2) NOT NULL,
-    volume_remain   INTEGER      NOT NULL,
-    volume_total    INTEGER      NOT NULL,
-    min_volume      INTEGER      NOT NULL DEFAULT 1,
+    order_id        BIGINT        NOT NULL PRIMARY KEY,
+    region_id       INTEGER       NOT NULL,
+    type_id         INTEGER       NOT NULL,
+    location_id     BIGINT        NOT NULL,
+    is_buy_order    BOOLEAN       NOT NULL,
+    price           NUMERIC(20,2) NOT NULL,
+    volume_remain   INTEGER       NOT NULL,
+    volume_total    INTEGER       NOT NULL,
+    min_volume      INTEGER       NOT NULL DEFAULT 1,
     range           VARCHAR(20),
-    issued          TIMESTAMPTZ  NOT NULL,
-    duration        INTEGER      NOT NULL,
-    captured_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (order_id, captured_at)
-) PARTITION BY RANGE (captured_at);
+    issued          TIMESTAMPTZ   NOT NULL,
+    duration        INTEGER       NOT NULL,
+    captured_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
 
--- Rolling partitions — init.sql creates the first two; the agent creates new ones daily
-CREATE TABLE IF NOT EXISTS market_orders_default PARTITION OF market_orders DEFAULT;
-
-CREATE INDEX IF NOT EXISTS idx_orders_location_type ON market_orders (location_id, type_id, is_buy_order, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_orders_type_buy ON market_orders (type_id, is_buy_order, captured_at DESC);
+-- region_id + is_buy_order is the hot path for the arbitrage supply CTE
+CREATE INDEX IF NOT EXISTS idx_orders_region_buy    ON market_orders (region_id, is_buy_order, price);
+-- location_id lookup for hub supply / cheapest-sell queries
+CREATE INDEX IF NOT EXISTS idx_orders_location_type ON market_orders (location_id, type_id, is_buy_order);
+-- captured_at for the prune DELETE and freshness filters
+CREATE INDEX IF NOT EXISTS idx_orders_captured      ON market_orders (captured_at);
 
 -- Identified arbitrage opportunities
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -126,7 +129,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_opps_active_unique
     ON opportunities (type_id, target_station_id)
     WHERE active = TRUE;
 
--- Prune old order data (called by agent nightly)
+-- Prune orders not seen in recent scans.
+-- With one-row-per-order_id design the table is always small, so a plain
+-- DELETE is fast — no batching needed.
 CREATE OR REPLACE FUNCTION prune_old_orders() RETURNS void LANGUAGE sql AS $$
-    DELETE FROM market_orders WHERE captured_at < NOW() - INTERVAL '25 hours';
+    DELETE FROM market_orders WHERE captured_at < NOW() - INTERVAL '70 minutes';
 $$;

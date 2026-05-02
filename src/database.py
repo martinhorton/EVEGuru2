@@ -201,13 +201,19 @@ _ORDER_INSERT_SQL = """
          price, volume_remain, volume_total, min_volume, range,
          issued, duration, captured_at)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-    ON CONFLICT (order_id, captured_at) DO NOTHING
+    ON CONFLICT (order_id) DO UPDATE
+        SET price         = EXCLUDED.price,
+            volume_remain = EXCLUDED.volume_remain,
+            volume_total  = EXCLUDED.volume_total,
+            captured_at   = EXCLUDED.captured_at
 """
-_ORDER_BATCH_SIZE = 5_000  # rows per executemany call (~1-2s each, well within timeout)
+# One row per order_id — table stays ~620K rows regardless of scan frequency.
+# 5 000 rows per executemany keeps each call well within command_timeout.
+_ORDER_BATCH_SIZE = 5_000
 
 
 async def upsert_orders_batch(rows: list[dict]) -> int:
-    """Insert market orders in chunks to avoid command_timeout on large regions (e.g. Jita)."""
+    """Upsert market orders — inserts new orders, updates price/volume on existing ones."""
     if not rows:
         return 0
     now = datetime.now(timezone.utc)
@@ -321,30 +327,17 @@ async def get_avg_market_price(
 
 
 async def prune_old_orders() -> None:
-    # Keep 70 minutes of order snapshots — slightly more than the 65-minute
-    # freshness window so ETag-cached data (no new rows inserted on 304) is
-    # never pruned before the arbitrage query can use it.
-    # Batched DELETE (10 000 rows at a time) avoids a single long-running
-    # transaction on the default partition which has no plain captured_at index.
-    total = 0
-    while True:
-        result = await pool().execute(
-            """
-            DELETE FROM market_orders
-            WHERE ctid IN (
-                SELECT ctid FROM market_orders
-                WHERE captured_at < NOW() - INTERVAL '70 minutes'
-                LIMIT 10000
-            )
-            """
-        )
-        # asyncpg returns e.g. "DELETE 10000"
-        deleted = int(result.split()[-1]) if result else 0
-        total += deleted
-        if deleted < 10000:
-            break
-    if total:
-        log.info("[db] Pruned %d stale order rows", total)
+    """Delete orders not refreshed in the last 70 minutes (likely cancelled/expired).
+
+    With the one-row-per-order_id schema the table stays at ~620K rows, so a
+    plain DELETE with the captured_at index is fast — no batching needed.
+    """
+    result = await pool().execute(
+        "DELETE FROM market_orders WHERE captured_at < NOW() - INTERVAL '70 minutes'"
+    )
+    deleted = int(result.split()[-1]) if result else 0
+    if deleted:
+        log.info("[db] Pruned %d stale order rows", deleted)
 
 
 # ---------------------------------------------------------------------------
