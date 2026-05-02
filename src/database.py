@@ -321,14 +321,30 @@ async def get_avg_market_price(
 
 
 async def prune_old_orders() -> None:
-    # Keep only 30 minutes of order snapshots — enough for the 20-minute
-    # freshness window plus one full scan cycle of buffer.
-    # We bypass the init.sql stored procedure (which used 25 hours) and
-    # delete directly so the retention can be changed without a DB migration.
-    result = await pool().execute(
-        "DELETE FROM market_orders WHERE captured_at < NOW() - INTERVAL '30 minutes'"
-    )
-    log.info("Pruned stale order data (%s)", result)
+    # Keep 70 minutes of order snapshots — slightly more than the 65-minute
+    # freshness window so ETag-cached data (no new rows inserted on 304) is
+    # never pruned before the arbitrage query can use it.
+    # Batched DELETE (10 000 rows at a time) avoids a single long-running
+    # transaction on the default partition which has no plain captured_at index.
+    total = 0
+    while True:
+        result = await pool().execute(
+            """
+            DELETE FROM market_orders
+            WHERE ctid IN (
+                SELECT ctid FROM market_orders
+                WHERE captured_at < NOW() - INTERVAL '70 minutes'
+                LIMIT 10000
+            )
+            """
+        )
+        # asyncpg returns e.g. "DELETE 10000"
+        deleted = int(result.split()[-1]) if result else 0
+        total += deleted
+        if deleted < 10000:
+            break
+    if total:
+        log.info("[db] Pruned %d stale order rows", total)
 
 
 # ---------------------------------------------------------------------------

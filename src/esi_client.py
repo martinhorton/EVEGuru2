@@ -120,9 +120,14 @@ class ESIClient:
                             await asyncio.sleep(wait)
                             continue
 
-                        if resp.status == 420:
+                        if resp.status in (420, 429):
+                            # 420 = ESI error-limit hit; 429 = Too Many Requests.
+                            # Both require a pause before retrying.
                             reset = int(resp.headers.get("X-Esi-Error-Limit-Reset", 60))
-                            log.error("ESI error limit hit — sleeping %ss", reset)
+                            log.warning(
+                                "ESI %s rate-limit on %s — sleeping %ss",
+                                resp.status, path, reset,
+                            )
                             await asyncio.sleep(reset + 2)
                             self._budget_remain = 100
                             continue

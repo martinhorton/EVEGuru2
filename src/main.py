@@ -89,7 +89,7 @@ async def order_loop(esi: ESIClient) -> None:
 
 
 async def arbitrage_loop() -> None:
-    """Run arbitrage analysis after every order cycle, then prune old data nightly."""
+    """Run arbitrage analysis after every order cycle, prune old orders every 2 cycles."""
     cycle = 0
     while not _shutdown.is_set():
         # Wait for the order loop to have had a chance to populate data
@@ -102,7 +102,7 @@ async def arbitrage_loop() -> None:
             log.exception("[arbitrage] Error during analysis pass")
 
         cycle += 1
-        if cycle % 12 == 0:  # roughly once per hour (12 × 5min = 60min)
+        if cycle % 2 == 0:  # every ~10 minutes keeps the table small
             try:
                 await database.prune_old_orders()
             except Exception:
@@ -146,14 +146,30 @@ async def main() -> None:
     log.info("EVEGuru2 starting up")
     await database.init_pool()
 
+    # Prune any leftover stale orders from previous runs before agents start.
+    # This prevents a large accumulated table from immediately timing out the
+    # first arbitrage pass after a crash-loop restart.
+    try:
+        await database.prune_old_orders()
+    except Exception:
+        log.exception("[db] Startup prune failed — continuing anyway")
+
     async with ESIClient() as esi:
         log.info("ESI client ready — launching agents")
-        await asyncio.gather(
+        # return_exceptions=True so a fatal error in one loop doesn't silently
+        # cancel all the others — each loop logs its own exceptions internally.
+        results = await asyncio.gather(
             history_loop(esi),
             order_loop(esi),
             arbitrage_loop(),
             report_loop(),
+            return_exceptions=True,
         )
+        for name, result in zip(
+            ("history", "orders", "arbitrage", "report"), results
+        ):
+            if isinstance(result, BaseException):
+                log.error("Loop '%s' exited with exception: %s", name, result)
 
     await database.close_pool()
     log.info("EVEGuru2 shut down cleanly")
