@@ -27,11 +27,11 @@ async def run_once(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
     cutoff = date.today() - timedelta(days=HISTORY_DAYS_TO_KEEP)
 
     total_rows = 0
-    batch: list[dict] = []
 
-    async def fetch_and_queue(type_id: int) -> None:
-        nonlocal total_rows
+    async def fetch_type(type_id: int) -> list[dict]:
+        """Fetch history for one type and return filtered rows (no shared state)."""
         rows = await esi.get_market_history(region_id, type_id)
+        result: list[dict] = []
         for r in rows:
             try:
                 row_date = date.fromisoformat(r["date"])
@@ -39,7 +39,7 @@ async def run_once(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
                 continue
             if row_date < cutoff:
                 continue
-            batch.append({
+            result.append({
                 "region_id":   region_id,
                 "type_id":     type_id,
                 "date":        row_date,
@@ -49,22 +49,27 @@ async def run_once(esi: ESIClient, region_id: int, type_ids: list[int]) -> None:
                 "order_count": r.get("order_count"),
                 "volume":      r.get("volume"),
             })
-            # Flush every 2000 rows to keep memory bounded
-            if len(batch) >= 2000:
-                inserted = await database.upsert_history_batch(batch)
-                total_rows += inserted
-                batch.clear()
+        return result
 
     # Process in small chunks with a brief pause between each to stay well inside
     # ESI's 100-errors-per-60s budget even when many types return 404.
+    # Each coroutine returns its own rows list — no shared mutable state between
+    # concurrent coroutines (avoids double-flush / lost-rows race condition).
     chunk_size = 20
+    batch: list[dict] = []
     for i in range(0, len(type_ids), chunk_size):
         chunk = type_ids[i : i + chunk_size]
-        await asyncio.gather(*[fetch_and_queue(tid) for tid in chunk])
+        chunk_results = await asyncio.gather(*[fetch_type(tid) for tid in chunk])
+        for rows in chunk_results:
+            batch.extend(rows)
         await asyncio.sleep(0.5)   # ~40 req/s max — gentle on the error budget
         if i % 1000 == 0 and i > 0:
             log.info("[history] Region %s: processed %d/%d types",
                      region_id, i, len(type_ids))
+        # Flush every 2000 accumulated rows to keep memory bounded
+        if len(batch) >= 2000:
+            total_rows += await database.upsert_history_batch(batch)
+            batch.clear()
 
     if batch:
         total_rows += await database.upsert_history_batch(batch)

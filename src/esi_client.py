@@ -191,21 +191,35 @@ class ESIClient:
     async def get_all_market_orders(
         self, region_id: int, order_type: str = "sell"
     ) -> list[dict]:
-        """Fetch all pages of orders for a region concurrently."""
+        """Fetch all pages of orders for a region.
+
+        Pages are fetched in batches of ESI_CONCURRENCY rather than all at once
+        to cap peak memory usage.  Firing all 285 Jita pages simultaneously
+        would hold ~285K order dicts in memory before the first insert, which
+        can exceed the 256 MB container limit.
+        """
+        from . import config as _cfg
+
         first_page, total_pages = await self.get_market_orders(
             region_id, order_type, page=1
         )
         if total_pages <= 1:
             return first_page
 
-        tasks = [
-            self.get_market_orders(region_id, order_type, page=p)
-            for p in range(2, total_pages + 1)
-        ]
-        results = await asyncio.gather(*tasks)
         all_orders = list(first_page)
-        for orders, _ in results:
-            all_orders.extend(orders)
+        remaining = list(range(2, total_pages + 1))
+        batch_size = _cfg.ESI_CONCURRENCY  # 20 — matches semaphore width
+
+        for i in range(0, len(remaining), batch_size):
+            batch_pages = remaining[i : i + batch_size]
+            tasks = [
+                self.get_market_orders(region_id, order_type, page=p)
+                for p in batch_pages
+            ]
+            results = await asyncio.gather(*tasks)
+            for orders, _ in results:
+                all_orders.extend(orders)
+
         return all_orders
 
     async def get_type_info(self, type_id: int) -> dict:
